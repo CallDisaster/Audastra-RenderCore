@@ -31,7 +31,9 @@ struct alignas(8) ExternalFrameRequest {
     std::uint32_t contractVersion = ExternalFrameContractVersion;
     ExternalFrameSource source = ExternalFrameSource::Unknown;
     std::uint32_t reserved = 0;
-    ExternalGroupSlice groups;
+    // 新请求默认未声明空间；调用方必须同时填写 space 和 worldTransformApplied。
+    ExternalGroupSlice groups{{}, 48, MatrixLayout::ColumnMajor3x4,
+        static_cast<CoordinateSpace>(NoIndex), NoIndex};
     Range32 alphas;
     Range32 colors;
 };

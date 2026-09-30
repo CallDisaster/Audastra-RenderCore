@@ -28,6 +28,7 @@
 
 - 仅 `ColumnMajor3x4`、48 字节步长；四列依次为 X/Y/Z 基列和位移列，`m[column * 3 + row]`；隐含最后一行为 `0,0,0,1`。
 - 支持 `ModelLocal + worldTransformApplied=0` 和 `World + worldTransformApplied=1`。`NodeLocal`、未知空间、标志大于 1、空间/标志不一致均拒绝。
+- 新 `ExternalFrameRequest.groups` 默认空间和世界变换标志均为无效哨兵，调用方必须显式填写两项；省略两项或只填写一项都拒绝。旧 `ExternalGroupSlice`、Computed 和 ExternalGroups 的默认值、布局和预算不变。本合同用于 C++ 对象，不是可以盲目 memset 的 IPC 包；哨兵只能捕捉默认构造时的遗漏，不能证明宿主填写的空间符合实际数据。
 - 矩阵按原 geoset 顺序拼接，数量精确等于 `CompiledModel::GroupCount()`；顶点组号是 geoset 内局部组号。所有矩阵分量必须有限，逐位复制，不转置、不平均、不自动乘/逆乘世界矩阵。
 - alpha 和 RGB 数量分别精确等于 `GeosetCount()`，不得根据动作或静态 GEOA 补齐。alpha 只要求有限，不在核心额外截断；RGB 为实际绝对值，要求有限且每分量位于 `[0,1]`，不得再次乘静态颜色。
 - 使用 `offset <= size && count <= size - offset` 检查各范围，避免整数加法溢出。零 geoset 资产可有零通道，非零资产缺通道必须拒绝。

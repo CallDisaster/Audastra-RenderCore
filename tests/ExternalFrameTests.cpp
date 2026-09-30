@@ -55,6 +55,7 @@ struct Fixture {
             auto& r = requests[i]; r.instance = {i + 1, 4}; r.asset = asset.Identity();
             r.source = context.source; r.sourceEpoch = context.sourceEpoch; r.frameVersion = context.frameVersion;
             r.groups.matrices = {i * asset.GroupCount(), asset.GroupCount()};
+            r.groups.space = CoordinateSpace::ModelLocal; r.groups.worldTransformApplied = 0;
             r.alphas = {i * asset.GeosetCount(), asset.GeosetCount()}; r.colors = r.alphas;
             for (std::uint32_t j = 0; j < asset.GroupCount(); ++j) {
                 auto& g = groups[r.groups.matrices.offset + j];
@@ -138,6 +139,11 @@ void InstanceRejections() {
     r.sourceEpoch -= 1; reject(Code::ExternalFrameStale);
     r.frameVersion = 0; reject(Code::ExternalFrameStale);
     r.frameVersion -= 1; reject(Code::ExternalFrameStale);
+    auto unspecifiedSpace = ExternalFrameRequest{}.groups;
+    unspecifiedSpace.matrices = good.groups.matrices;
+    r.groups = unspecifiedSpace; reject(Code::ExternalFrameLayoutInvalid);
+    r.groups = unspecifiedSpace; r.groups.space = CoordinateSpace::ModelLocal; reject(Code::ExternalFrameLayoutInvalid);
+    r.groups = unspecifiedSpace; r.groups.worldTransformApplied = 0; reject(Code::ExternalFrameLayoutInvalid);
     r.groups.space = CoordinateSpace::NodeLocal; reject(Code::ExternalFrameLayoutInvalid);
     r.groups.space = static_cast<CoordinateSpace>(99); reject(Code::ExternalFrameLayoutInvalid);
     r.groups.worldTransformApplied = 0; reject(Code::ExternalFrameLayoutInvalid);
