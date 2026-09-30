@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 CallDisaster
+# 保留文件原字节，提交锁定清单直接校验工作树 SHA。
+* -text
