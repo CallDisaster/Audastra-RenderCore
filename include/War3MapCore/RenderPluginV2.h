@@ -277,6 +277,8 @@ struct War3RenderModelSceneLayerV2;
 struct War3RenderModelLayerUpdateV2;
 struct War3RenderModelLayersTargetV2;
 struct War3RenderLayeredCapturedFrameV2;
+struct War3RenderFrameMetricsV2;
+struct War3RenderFrameMetricsPageV2;
 struct War3RenderPluginApiV2 {
     std::uint32_t structSize;
     std::uint32_t apiVersion;
@@ -349,6 +351,10 @@ struct War3RenderPluginApiV2 {
     std::int32_t (WAR3_RENDER_CALL* getModelLayersTarget)(War3RendererHandle, struct War3RenderModelLayersTargetV2*);
     std::int32_t (WAR3_RENDER_CALL* captureLayeredFrameRgba)(War3RendererHandle, std::uint64_t expectedLayersRevision,
         void*, std::uint64_t, struct War3RenderLayeredCapturedFrameV2*);
+    // 可选只读测量尾部：先核 offsetof+sizeof 指针及非空。仅枚举实际完成的 Draw/Present，
+    // 不等待、不读回、不调度；记录身份与时长同次发布。分页合同见 RenderPluginFrameMetrics.h。
+    std::int32_t (WAR3_RENDER_CALL* getFrameMetrics)(War3RendererHandle, std::uint64_t afterFrame,
+        struct War3RenderFrameMetricsV2* records, std::uint32_t capacity, struct War3RenderFrameMetricsPageV2*);
 };
 using War3GetRenderPluginApiV2 = const War3RenderPluginApiV2* (WAR3_RENDER_CALL*)(std::uint32_t);
 WAR3_RENDER_EXPORT const War3RenderPluginApiV2* WAR3_RENDER_CALL

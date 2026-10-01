@@ -3,6 +3,7 @@
 
 #include "RenderSkinFixture.h"
 #include "War3RenderCore/Legacy/RenderPluginModelLayers.h"
+#include "War3RenderCore/Legacy/RenderPluginFrameMetrics.h"
 #include "../src/Render/Scene/ModelSkinInput.h"
 #include <iostream>
 #include <limits>
@@ -71,7 +72,24 @@ int main() {
         static_assert(std::is_standard_layout_v<War3RenderLayeredCapturedFrameV2>);
         static_assert(offsetof(War3RenderLayeredCapturedFrameV2,world) == 16);
         static_assert(offsetof(War3RenderSkinSharedRangeCapabilitiesV2,base) == 0);
+        // A1 只追加函数尾部，0.1.1 的全部入口保持尺寸与偏移；无指针的计时载荷两档位一致。
+        static_assert(offsetof(War3RenderPluginApiV2, getFrameMetrics)
+            == offsetof(War3RenderPluginApiV2, captureLayeredFrameRgba) + sizeof(War3RenderPluginApiV2::captureLayeredFrameRgba));
+        static_assert(offsetof(War3RenderPluginApiV2, getFrameMetrics) == 8 + 34 * sizeof(void(*)()));
+        static_assert(sizeof(War3RenderPluginApiV2) == 8 + 35 * sizeof(void(*)()));
+        static_assert(std::is_standard_layout_v<War3RenderFrameMetricsV2> && sizeof(War3RenderFrameMetricsV2) == 408);
+        static_assert(sizeof(War3RenderFrameMetricsV2::completedSteadyNs) == 8
+            && offsetof(War3RenderFrameMetricsV2, completedSteadyNs) == 16
+            && offsetof(War3RenderFrameMetricsV2, readbackCpuNs) == 48
+            && offsetof(War3RenderFrameMetricsV2, completed) == 80);
+        static_assert(std::is_standard_layout_v<War3RenderFrameMetricsPageV2>
+            && sizeof(War3RenderFrameMetricsPageV2) == 304
+            && offsetof(War3RenderFrameMetricsPageV2, oldestFrame) == 16
+            && offsetof(War3RenderFrameMetricsPageV2, adapterName) == 48);
         std::cout << "skin_input copied=1 range_layout_count_rejections=1 recovery=1 old_tail_unchanged=1\n";
+        std::cout << "frame_metrics_abi pointer_bytes=" << sizeof(void*) << " api_bytes=" << sizeof(War3RenderPluginApiV2)
+            << " tail_offset=" << offsetof(War3RenderPluginApiV2, getFrameMetrics)
+            << " record_bytes=" << sizeof(War3RenderFrameMetricsV2) << " page_bytes=" << sizeof(War3RenderFrameMetricsPageV2) << '\n';
         return 0;
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }
