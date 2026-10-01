@@ -279,6 +279,8 @@ struct War3RenderModelLayersTargetV2;
 struct War3RenderLayeredCapturedFrameV2;
 struct War3RenderFrameMetricsV2;
 struct War3RenderFrameMetricsPageV2;
+struct War3RenderEditorInstanceRosterV2;
+struct War3RenderInstanceRosterResultV2;
 struct War3RenderPluginApiV2 {
     std::uint32_t structSize;
     std::uint32_t apiVersion;
@@ -355,6 +357,11 @@ struct War3RenderPluginApiV2 {
     // 不等待、不读回、不调度；记录身份与时长同次发布。分页合同见 RenderPluginFrameMetrics.h。
     std::int32_t (WAR3_RENDER_CALL* getFrameMetrics)(War3RendererHandle, std::uint64_t afterFrame,
         struct War3RenderFrameMetricsV2* records, std::uint32_t capacity, struct War3RenderFrameMetricsPageV2*);
+    // 可选驻留资产roster事务：只追加尾部，独立核尺寸与非空；0仅为CPU接收票据。
+    std::int32_t (WAR3_RENDER_CALL* submitEditorInstanceRoster)(War3RendererHandle,
+        const War3RenderEditorInstanceRosterV2*, std::uint64_t* ticket);
+    std::int32_t (WAR3_RENDER_CALL* getEditorInstanceRosterResult)(War3RendererHandle,
+        std::uint64_t ticket, War3RenderInstanceRosterResultV2*);
 };
 using War3GetRenderPluginApiV2 = const War3RenderPluginApiV2* (WAR3_RENDER_CALL*)(std::uint32_t);
 WAR3_RENDER_EXPORT const War3RenderPluginApiV2* WAR3_RENDER_CALL

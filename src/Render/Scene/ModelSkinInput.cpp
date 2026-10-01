@@ -185,6 +185,24 @@ bool CopySkinnedModelInput(const War3RenderSkinnedModelSceneV2& input, ModelScen
     scene.initialSkin = std::move(pose);
     return payloadBytes <= 320ull * 1024 * 1024;
 }
+bool CopySkinRoster(const War3RenderSkinUpdateV2& input, const ModelScene& residentStatic, ModelScene& output) {
+    if (!residentStatic.initialSkin || !input.sceneVersion || !input.contentVersion
+        || input.sceneVersion <= residentStatic.initialSkin->sceneVersion
+        || input.matrixFormat != residentStatic.initialSkin->matrixFormat
+        || (input.structSize == sizeof(War3RenderDynamicColoredSkinUpdateV2)) != !residentStatic.initialSkin->colors.empty()) return false;
+    ModelScene candidate;
+    candidate.models = residentStatic.models; candidate.modelGroupCounts = residentStatic.modelGroupCounts;
+    candidate.meshes = residentStatic.meshes; candidate.layers = residentStatic.layers;
+    candidate.meshGroups = residentStatic.meshGroups;
+    // 新槽的初始化沿用首次CopySkinnedModelInput的完整数值/片段校验，绝不修改旧initialSkin。
+    auto initial = std::make_shared<SkinPose>();
+    if (!CopySkinUpdate(input, candidate, *initial)) return false;
+    candidate.instances.reserve(initial->instances.size());
+    for (const auto& instance : initial->instances) candidate.instances.push_back(instance.instance);
+    candidate.initialSkin = std::move(initial);
+    output = std::move(candidate);
+    return true;
+}
 static_assert(sizeof(War3RenderSkinnedModelVertexV2) == 36);
 static_assert(sizeof(War3RenderSkinnedModelInstanceV2) == 72);
 static_assert(sizeof(War3RenderGroupMatrixV2) == 48);

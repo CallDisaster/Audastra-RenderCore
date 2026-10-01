@@ -48,6 +48,14 @@ endif()
 add_test(NAME render-skin-input COMMAND war3-render-skin-input-tests)
 set_tests_properties(render-skin-input PROPERTIES TIMEOUT 60)
 
+# 实例名单替换是显式事务，普通姿势更新仍保留固定名单门禁。
+add_executable(war3-render-skin-roster-tests
+    "${_render_core_repo}/tests/RenderSkinRosterTests.cpp")
+target_link_libraries(war3-render-skin-roster-tests PRIVATE War3RenderCore::SkinInput)
+war3_render_core_options(war3-render-skin-roster-tests)
+add_test(NAME render-skin-roster COMMAND war3-render-skin-roster-tests)
+set_tests_properties(render-skin-roster PROPERTIES TIMEOUT 60)
+
 # Step4 覆盖修复：独立编译参考，避免全量 Core/Qt 依赖。
 add_executable(war3-render-coverage-tests
     "${_render_core_repo}/tests/RenderCoverageTests.cpp"
