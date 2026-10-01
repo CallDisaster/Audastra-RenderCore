@@ -362,6 +362,12 @@ struct War3RenderPluginApiV2 {
         const War3RenderEditorInstanceRosterV2*, std::uint64_t* ticket);
     std::int32_t (WAR3_RENDER_CALL* getEditorInstanceRosterResult)(War3RendererHandle,
         std::uint64_t ticket, War3RenderInstanceRosterResultV2*);
+    // 同一roster事务的可选能力。旧尺寸不足时不能发送未知扩展结构。
+    std::int32_t (WAR3_RENDER_CALL* getEditorRosterCapabilities)(War3RendererHandle, std::uint32_t* flags);
+    // 按确切票据取消仍未提交的roster；已完成只返回原终态，不回滚完成帧。
+    // 旧插件没有此尾部时，宿主必须保留在途owner直到可证明的终态。
+    std::int32_t (WAR3_RENDER_CALL* cancelEditorInstanceRoster)(War3RendererHandle,
+        std::uint64_t ticket, War3RenderInstanceRosterResultV2*);
 };
 using War3GetRenderPluginApiV2 = const War3RenderPluginApiV2* (WAR3_RENDER_CALL*)(std::uint32_t);
 WAR3_RENDER_EXPORT const War3RenderPluginApiV2* WAR3_RENDER_CALL

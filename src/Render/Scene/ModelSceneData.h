@@ -24,6 +24,12 @@ struct SkinPose {
     std::vector<float> alphas;
     std::vector<War3RenderMeshColorV2> colors; // 空=静态颜色；否则与alphas平行，内容属于contentVersion
 };
+struct ModelStaticSuffix {
+    std::vector<War3RenderModelVertexV2> vertices;
+    std::vector<std::uint16_t> indices;
+    std::vector<std::uint32_t> vertexGroups;
+    std::vector<TextureRgba> textures;
+};
 // 模型场景的 CPU 副本（已由插件入口校验）。
 struct ModelScene {
     std::vector<War3RenderModelVertexV2> vertices;
@@ -39,6 +45,38 @@ struct ModelScene {
     std::vector<std::uint32_t> modelGroupCounts;
     std::vector<War3RenderMeshColorV2> meshColors; // 空=旧白色路径，否则与meshes等长
     std::shared_ptr<const SkinPose> initialSkin; // 非空即为蒙皮模型槽
-
+    // 追加场景的layout元数据完整，几何/纹理只拥有本次suffix；旧字节由不可变前缀拥有。
+    std::shared_ptr<const ModelScene> staticBase;
+    std::vector<std::shared_ptr<const ModelStaticSuffix>> staticPrefixes;
+    std::shared_ptr<const ModelStaticSuffix> staticSuffix;
+    std::uint32_t prefixVertices = 0, prefixIndices = 0, prefixTextures = 0;
+    std::uint32_t prefixLayers = 0, prefixMeshes = 0, prefixModels = 0;
+    bool dynamicColors = false; // 由请求格式绑定，空roster也不能丢掉动态颜色模式。
+    const auto& StaticVertices() const noexcept { return staticSuffix ? staticSuffix->vertices : vertices; }
+    const auto& StaticIndices() const noexcept { return staticSuffix ? staticSuffix->indices : indices; }
+    const auto& StaticVertexGroups() const noexcept { return staticSuffix ? staticSuffix->vertexGroups : vertexGroups; }
+    const auto& StaticTextures() const noexcept { return staticSuffix ? staticSuffix->textures : textures; }
+    std::uint32_t VertexCount() const noexcept { return prefixVertices + static_cast<std::uint32_t>(StaticVertices().size()); }
+    std::uint32_t IndexCount() const noexcept { return prefixIndices + static_cast<std::uint32_t>(StaticIndices().size()); }
+    std::uint32_t TextureCount() const noexcept { return prefixTextures + static_cast<std::uint32_t>(StaticTextures().size()); }
+    // 仅在候选拥有者发布前调用；转移新suffix，不复制已驻留字节。
+    void SealStaticSuffix() {
+        if (staticSuffix) return;
+        auto suffix = std::make_shared<ModelStaticSuffix>();
+        suffix->vertices = std::move(vertices); suffix->indices = std::move(indices);
+        suffix->vertexGroups = std::move(vertexGroups); suffix->textures = std::move(textures);
+        staticSuffix = std::move(suffix);
+    }
+    std::uint64_t TextureBytes() const noexcept {
+        const auto bytes = [](const auto& values) {
+            std::uint64_t total = 0;
+            for (const auto& texture : values) for (const auto& mip : texture.mips) total += mip.rgba.size();
+            return total;
+        };
+        std::uint64_t total = bytes(StaticTextures());
+        if (staticBase) total += bytes(staticBase->StaticTextures());
+        for (const auto& page : staticPrefixes) total += bytes(page->textures);
+        return total;
+    }
 };
 }

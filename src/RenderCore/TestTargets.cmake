@@ -56,6 +56,14 @@ war3_render_core_options(war3-render-skin-roster-tests)
 add_test(NAME render-skin-roster COMMAND war3-render-skin-roster-tests)
 set_tests_properties(render-skin-roster PROPERTIES TIMEOUT 60)
 
+# 静态资产页追加独立于姿势名单替换，保留固定名单更新的拒绝边界。
+add_executable(war3-render-skin-asset-append-tests
+    "${_render_core_repo}/tests/RenderSkinAssetAppendTests.cpp")
+target_link_libraries(war3-render-skin-asset-append-tests PRIVATE War3RenderCore::SkinInput)
+war3_render_core_options(war3-render-skin-asset-append-tests)
+add_test(NAME render-skin-asset-append COMMAND war3-render-skin-asset-append-tests)
+set_tests_properties(render-skin-asset-append PROPERTIES TIMEOUT 60)
+
 # Step4 覆盖修复：独立编译参考，避免全量 Core/Qt 依赖。
 add_executable(war3-render-coverage-tests
     "${_render_core_repo}/tests/RenderCoverageTests.cpp"

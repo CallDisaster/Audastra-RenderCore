@@ -3,6 +3,7 @@
 
 #pragma once
 #include "ModelSceneData.h"
+#include "War3MapCore/RenderPluginInstanceRoster.h"
 #include <cstdint>
 
 namespace War3Map::Render {
@@ -15,4 +16,9 @@ namespace War3Map::Render {
 // 不复制几何、纹理或索引；失败不改变output，旧CopySkinUpdate的固定baseline规则保持。
 [[nodiscard]] bool CopySkinRoster(const War3RenderSkinUpdateV2& input,
     const ModelScene& residentStatic, ModelScene& output);
+// 只复制追加suffix和完整layout元数据，原静态前缀通过shared_ptr保持拥有。
+// 不处理纹理字节，调用方须按同一累计预算校验/拥有两类纹理后才发布。
+[[nodiscard]] bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets,
+    const War3RenderSkinUpdateV2& input, std::shared_ptr<const ModelScene> residentStatic,
+    ModelScene& output, std::uint64_t& payloadBytes);
 }

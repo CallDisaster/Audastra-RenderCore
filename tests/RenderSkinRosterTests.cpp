@@ -66,7 +66,7 @@ int main() {
         static_assert(std::is_standard_layout_v<War3RenderInstanceRosterResultV2>);
         static_assert(offsetof(War3RenderPluginApiV2, getFrameMetrics) == 8 + 34 * sizeof(void(*)()));
         static_assert(offsetof(War3RenderPluginApiV2, submitEditorInstanceRoster) == 8 + 35 * sizeof(void(*)()));
-        static_assert(sizeof(War3RenderPluginApiV2) == 8 + 37 * sizeof(void(*)()));
+        static_assert(sizeof(War3RenderPluginApiV2) == 8 + 39 * sizeof(void(*)()));
         std::cout << "resident-roster one->twenty->zero, strict baseline and rollback passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
