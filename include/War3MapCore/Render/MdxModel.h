@@ -91,7 +91,7 @@ struct MdxGeosetAnimation {
     std::vector<MdxGeosetAlphaKey> alphaKeys;
     bool hasAlphaTrack = false;
     bool hasUninterpretedData = false;
-    // GEOA 静态颜色：文件 BGR 转成 RGB；仅 flags & 0x2 时参与着色。
+    // GEOA 静态颜色保持文件 RGB 顺序；仅 flags & 0x2 时参与着色。
     // 不重写原始标志；KGAC 与 KGAO 各有独立插值类型和全局序列。
     std::array<float, 3> staticColor{1, 1, 1};
     bool hasColorTrack = false;
