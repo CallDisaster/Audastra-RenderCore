@@ -6,7 +6,7 @@
 namespace War3RenderCore::Detail {
 
 // 保持 FORGE 冻结参考的 float 存储、double 中间量和运算顺序。
-// 原 MdxPose.cpp 不改动，用作独立差分裁判；本模块不包含 WarVK 或第三方实现。
+// MdxPose.cpp 是独立差分裁判；同一规格分别实现，不包含 WarVK 或第三方实现。
 Quaternion Normalize(Quaternion value, Evaluation& e) noexcept {
     if (!CheckFinite(value, e)) return {};
     double squared = 0;
@@ -122,14 +122,15 @@ Matrix4 FacingBasis(const Vec3& towardEye, const Vec3& cameraUp, std::uint32_t f
     }
     const auto facing = UnitVector(towardEye, Code::PoseCameraInvalid, e);
     if (!e.Good()) return {};
-    auto right = Cross(facing, cameraUp);
+    // 无锁 billboard 的本地 YZ 平面以 +X 为法线；仅通用预览，未声明原版逐帧等价。
+    auto right = Cross(cameraUp, facing);
     if (std::hypot(static_cast<double>(right[0]), right[1], right[2]) < 1e-8)
-        right = Cross(facing, std::abs(facing[2]) < 0.9f ? Vec3{0, 0, 1} : Vec3{0, 1, 0});
+        right = Cross(std::abs(facing[2]) < 0.9f ? Vec3{0, 0, 1} : Vec3{0, 1, 0}, facing);
     right = UnitVector(right, Code::PoseCameraInvalid, e);
-    const auto up = UnitVector(Cross(right, facing), Code::PoseCameraInvalid, e);
+    const auto up = UnitVector(Cross(facing, right), Code::PoseCameraInvalid, e);
     auto matrix = Identity();
     for (std::size_t row = 0; row < 3; ++row) {
-        matrix[row] = right[row]; matrix[4 + row] = facing[row]; matrix[8 + row] = up[row];
+        matrix[row] = facing[row]; matrix[4 + row] = right[row]; matrix[8 + row] = up[row];
     }
     return matrix;
 }

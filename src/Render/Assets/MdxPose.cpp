@@ -331,19 +331,18 @@ Matrix FacingBasis(const Vec3& towardEye, const Vec3& cameraUp, std::uint32_t fl
         const double sine = towardEye[b] / (length * rotated[b]);
         return AxisRotation(axis, cosine, sine);
     }
-    // 通用球面看向矩阵的逆：局部 +Y 朝视点，+Z 与相机 up 尽可能一致。
-    // 参照 Microsoft XMMatrixLookAtLH 的 eye/target/up 构造，但坐标采用 MDX 的 Z-up。
-    // https://learn.microsoft.com/en-us/windows/win32/api/directxmath/nf-directxmath-xmmatrixlookatlh
+    // 无锁 billboard 的本地 YZ 平面以 +X 为法线，列 [facing,right,up] 保持右手基。
+    // 这是通用算法预览；尚未用原版逐帧矩阵确认，锁轴路径保持既有规则。
     const auto facing = UnitVector(towardEye, "MDX_POSE_CAMERA_INVALID");
-    auto right = Cross(facing, cameraUp);
+    auto right = Cross(cameraUp, facing);
     if (std::hypot(static_cast<double>(right[0]), right[1], right[2]) < 1e-8)
-        right = Cross(facing, std::abs(facing[2]) < 0.9f ? Vec3{0, 0, 1} : Vec3{0, 1, 0});
+        right = Cross(std::abs(facing[2]) < 0.9f ? Vec3{0, 0, 1} : Vec3{0, 1, 0}, facing);
     right = UnitVector(right, "MDX_POSE_CAMERA_INVALID");
-    const auto up = UnitVector(Cross(right, facing), "MDX_POSE_CAMERA_INVALID");
+    const auto up = UnitVector(Cross(facing, right), "MDX_POSE_CAMERA_INVALID");
     auto matrix = Identity();
     for (std::size_t row = 0; row < 3; ++row) {
-        matrix[row] = right[row];
-        matrix[4 + row] = facing[row];
+        matrix[row] = facing[row];
+        matrix[4 + row] = right[row];
         matrix[8 + row] = up[row];
     }
     return matrix;

@@ -12,7 +12,8 @@ std::vector<GeosetAnimation> ParseGeosetAnimations(Reader reader, const MdxLimit
         GeosetAnimation animation;
         auto& a = animation.value;
         a.staticAlpha = body.F32("geoset 透明度"); a.flags = body.U32("geoset 动画标志");
-        for (std::size_t c = 0; c < 3; ++c) a.staticColor[2-c] = std::bit_cast<float>(body.U32("geoset BGR"));
+        // 1.27a 静态字段最终按文件 RGB 消费；KGAC 值和切线仍为 BGR。
+        for (std::size_t c = 0; c < 3; ++c) a.staticColor[c] = std::bit_cast<float>(body.U32("geoset RGB"));
         animation.geosetId = body.U32("geoset ID");
         while (body.Remaining() >= 16) {
             const auto tag = body.PeekTag();

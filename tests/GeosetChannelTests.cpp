@@ -17,20 +17,20 @@ using namespace War3RenderCore;
 void Check(bool value,const char* message) { if (!value) throw std::runtime_error(message); }
 using GeosetChannelFixture::Bytes;
 
-Code Compare(const MdxModel& model,std::uint64_t time,std::uint64_t global) {
+Code Compare(const MdxModel& model,std::uint64_t time,std::uint64_t global,std::uint32_t sequence=1) {
     const auto built=CompileMdxModel(model,{1,1},{"channels.mdx","synthetic","rgb"});
     Check(built.Succeeded(),"通道编译失败");
     const std::array assets{*built.value}; auto made=PoseBatchEvaluator::Create(assets,1);
     Check(made.Succeeded(),"通道预热失败");auto evaluator=std::move(*made.value);
-    PoseRequest request;request.asset={1,1};request.instance={1,1};request.sequenceIndex=1;
+    PoseRequest request;request.asset={1,1};request.instance={1,1};request.sequenceIndex=sequence;
     request.sequenceElapsedMs=time;request.globalElapsedMs=global;
     RenderCoreAllocProbe::Begin();auto result=evaluator.Evaluate(std::span(&request,1));const auto allocated=RenderCoreAllocProbe::End();
     Check(result.error==Code::Ok && allocated==0,"颜色热路径分配或批次失败");
     std::string error;
     for (std::uint32_t g=0;g<model.geosets.size();++g) {
-        const auto a=SampleMdxGeosetAlpha(model,{g,1,time,global});
+        const auto a=SampleMdxGeosetAlpha(model,{g,sequence,time,global});
         if (!a.Succeeded()) { error=a.diagnostics[0].code;break; }
-        const auto c=SampleMdxGeosetColor(model,{g,1,time,global});
+        const auto c=SampleMdxGeosetColor(model,{g,sequence,time,global});
         if (!c.Succeeded()) { error=c.diagnostics[0].code;break; }
         if (result.failedInstances==0) {
             Check(std::memcmp(&*a.value,&evaluator.Alphas(0)[g],4)==0,"透明度新旧逐位差分");
@@ -47,7 +47,16 @@ void Run() {
     for (std::uint32_t mode=0;mode<4;++mode) for (const bool global:{false,true}) {
         const auto bytes=Bytes(mode,global);const auto parsed=ParseMdx(bytes);Check(parsed.Succeeded(),"真实格式 KGAC 解析失败");
         const auto& a=*parsed.value->geosets[1].animation;
+        Check(a.staticColor==Vec3{1,0.211765f,0},"同一 GEOA 的静态 RGB 被按 KGAC 倒序");
+        if (!global) Check(Compare(*parsed.value,250,0,0)==Code::Ok &&
+            *SampleMdxGeosetColor(*parsed.value,{1,0,250,0}).value==a.staticColor,
+            "同一原字节 GEOA 在无 KGAC 动作键时未回到静态 RGB");
         Check(a.hasColorTrack && a.colorInterpolation==mode && a.colorKeys[0].value==Vec3{0,0.25f,1},"KGAC BGR/插值丢失");
+        if (mode>=2) for (const auto& key:a.colorKeys) {
+            const Vec3 in=mode==2 ? Vec3{0.625f,0.375f,-0.125f} : Vec3{0.75f,0.25f,0.25f};
+            const Vec3 out=mode==2 ? Vec3{0.625f,0.375f,-0.125f} : Vec3{0.25f,0.25f,0.75f};
+            Check(key.inTangent==in && key.outTangent==out,"KGAC 非对称 BGR 入/出切线转换错误");
+        }
         for (auto t:{0u,1u,123u,250u,500u,999u,1000u,1521u}) {
             Check(Compare(*parsed.value,t,t)==Code::Ok,"完整按键区间被拒绝");++samples;
         }
@@ -56,7 +65,7 @@ void Run() {
         const auto color=SampleMdxGeosetColor(*parsed.value,{1,1,500,500});
         Check(alpha.Succeeded() && color.Succeeded(),"手算样本失败");
         Check(*alpha.value==(mode==0 ? 0.0f : 0.5f),"KGAO 多项式中点错误");
-        Check((*color.value)[0]==(mode==0 ? 0.0f : 0.5f) && (*color.value)[2]==(mode==0 ? 1.0f : 0.5f),"KGAC 多项式/BGR 错误");
+        Check(*color.value==(mode==0 ? Vec3{0,0.25f,1} : Vec3{0.5f,0.25f,0.5f}),"KGAC 多项式/BGR 错误");
         auto truncated=bytes;truncated.pop_back();Check(!ParseMdx(truncated).Succeeded(),"截断未拒绝");
     }
     auto zero=*ParseMdx(Bytes(1,true)).value;zero.globalSequences[0]=0;

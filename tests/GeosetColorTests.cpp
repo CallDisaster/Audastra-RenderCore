@@ -13,14 +13,14 @@
 namespace {
 using namespace War3Map::Render;
 void Require(bool value, const char* text) { if (!value) throw std::runtime_error(text); }
-std::vector<std::byte> ColorModel(std::uint32_t flags, const std::array<float, 3>& bgr) {
+std::vector<std::byte> ColorModel(std::uint32_t flags, const std::array<float, 3>& rgb) {
     auto bytes = MdxTest::BuildTestMdx();
     for (std::size_t at = 4; at + 8 <= bytes.size();) {
         std::uint32_t size = 0; std::memcpy(&size, bytes.data() + at + 4, 4);
         if (std::memcmp(bytes.data() + at, "GEOA", 4) == 0) {
             Require(size >= 28, "fixture GEOA too short");
             std::memcpy(bytes.data() + at + 16, &flags, 4);
-            std::memcpy(bytes.data() + at + 20, bgr.data(), 12);
+            std::memcpy(bytes.data() + at + 20, rgb.data(), 12);
             return bytes;
         }
         at += 8 + size;
@@ -32,10 +32,11 @@ void ParseColor() {
     const auto parsed = ParseMdx(bytes);
     Require(parsed.Succeeded(), "color fixture rejected by parser");
     const auto& model = *parsed.value;
-    const std::array<float, 3> rgb{0.0f, 0.211765f, 1.0f};
+    // 原蓝色 Spin 期望来自只看 loader 的错误倒序；1.27a 完整消费链证明静态文件 RGB。
+    const std::array<float, 3> rgb{1.0f, 0.211765f, 0.0f};
     const auto read = SampleMdxGeosetColor(model, {1, 1, 250, 0});
     Require(read.Succeeded() && std::memcmp(read.value->data(), rgb.data(), sizeof(rgb)) == 0,
-        "GEOA BGR to RGB mismatch");
+        "GEOA static RGB source order mismatch");
     Require(model.geosets[1].animation->flags == 2 &&
         std::memcmp(model.geosets[1].animation->staticColor.data(), rgb.data(), sizeof(rgb)) == 0,
         "parser discarded static color or flag");
@@ -63,7 +64,7 @@ void ParseColor() {
     // A 链路完成后，静态 RGB 不再封住 alpha；未知位和未知尾部的拒绝仍在上方覆盖。
     const auto blocked = SampleMdxGeosetAlpha(model,{1,1,250,0});
     Require(blocked.Succeeded() && *blocked.value == 0.0f, "静态 RGB 的 KGAO 未正确求值");
-    std::cout << "geoa_static_color_bgr=1 flags_retained=1 inactive_identity=1 strict_rejections=1 static_rgb_alpha_enabled=1\n";
+    std::cout << "geoa_static_color_rgb=1 flags_retained=1 inactive_identity=1 strict_rejections=1 static_rgb_alpha_enabled=1\n";
 }
 }
 int main() {

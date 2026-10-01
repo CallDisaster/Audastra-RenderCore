@@ -272,6 +272,50 @@ void Oracle() {
     std::cout << "oracle requests=" << checkedRequests << " nodes=" << checkedNodes << " vertices=" << checkedVertices
               << " bitwise_mismatches=0 diagnostic_mismatches=0\n";
 }
+void BillboardYZQuad() {
+    auto model = Model();
+    model.helpers[0].translation = MdxNodeTrack<3>{MdxInterpolation::None, UINT32_MAX,
+        {{0, {3, 4, 5}, {}, {}}}};
+    model.bones[0].flags = 0x108;
+    auto& quad = model.geosets[0];
+    quad.positions = {{1, -3, -1}, {1, -1, -1}, {1, -3, 1}, {1, -1, 1}};
+    quad.normals.assign(4, {1, 0, 0}); quad.vertexGroups.assign(4, 0);
+    quad.matrixGroupSizes = {1}; quad.matrixIndices = {0};
+    const auto original = quad.positions;
+    const Vec3 anchor{4, 2, 5}; // 父平移 (3,4,5) 加本地 pivot (1,-2,0)。
+    const std::array cameras{MdxPoseCamera{{24, -8, 17}, {0, 0, 1}},
+        MdxPoseCamera{{4.000001f, 2, 25}, {0, 0, 1}}, MdxPoseCamera{{4, 2, 25}, {0, 0, 1}}};
+    for (const auto& camera : cameras) {
+        auto request = Request(); request.hasCamera = 1; request.camera = {camera.eye, camera.up};
+        AgainstReference(model, request);
+        const auto pose = SampleMdxNodePose(model, ReferenceRequest(request, 0));
+        const auto skin = SampleMdxRigidSkinnedGeoset(model, {0, 1, 250, 0, camera});
+        Require(pose.Succeeded() && skin.Succeeded(), "YZ billboard 的轴心/几何采样失败");
+        const auto& matrix = pose.value->chain.back().worldMatrix;
+        const double det = matrix[0] * (matrix[5] * matrix[10] - matrix[9] * matrix[6])
+            - matrix[4] * (matrix[1] * matrix[10] - matrix[9] * matrix[2])
+            + matrix[8] * (matrix[1] * matrix[6] - matrix[5] * matrix[2]);
+        Require(det > 0.999, "无锁 billboard 交换基列后翻转 handedness");
+        const Vec3 direction{camera.eye[0] - anchor[0], camera.eye[1] - anchor[1], camera.eye[2] - anchor[2]};
+        const auto length = std::hypot(static_cast<double>(direction[0]), direction[1], direction[2]);
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            const auto pivot = matrix[12 + axis] + matrix[axis] * model.pivots[0][0]
+                + matrix[4 + axis] * model.pivots[0][1] + matrix[8 + axis] * model.pivots[0][2];
+            Require(std::abs(pivot - anchor[axis]) < 1e-5f, "billboard 改朝向时轴心脱离父链");
+        }
+        for (std::size_t v = 0; v < quad.positions.size(); ++v) {
+            double plane = 0;
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                Require(std::abs(skin.value->normals[v][axis] - direction[axis] / length) < 1e-6,
+                    "纯 YZ billboard 的本地 X 法线未朝向相机");
+                plane += (skin.value->positions[v][axis] - anchor[axis]) * direction[axis] / length;
+            }
+            Require(std::abs(plane) < 1e-5, "YZ quad 未处于面向相机的平面");
+        }
+    }
+    Require(quad.positions == original, "billboard 求值改写静态几何");
+    std::cout << "billboard_yz_quads=3 handedness_positive=1 parent_pivot_retained=1 bitwise_mismatches=0 preview_approximate=1\n";
+}
 void Instances() {
     RenderCoreAllocProbe::Begin();
     void* scalarProbe = ::operator new(1); void* alignedProbe = ::operator new(1, std::align_val_t{64});
@@ -422,7 +466,7 @@ int main(int argc, char** argv) {
     try {
         Require(argc == 2, "用法：war3-render-core-tests oracle|instances|external");
         const std::string group = argv[1];
-        if (group == "oracle") { Oracle(); RigidStaticPreview(); }
+        if (group == "oracle") { Oracle(); BillboardYZQuad(); RigidStaticPreview(); }
         else if (group == "instances") Instances(); else if (group == "external") External();
         else throw std::runtime_error("未知测试分组");
         std::cout << "PASS " << group << '\n'; return 0;

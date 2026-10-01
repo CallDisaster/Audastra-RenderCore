@@ -381,12 +381,12 @@ void TestPosePreviewSemantics() {
     const auto frontPose = SampleMdxNodePose(model, {0, 500, 500, 0, front});
     Require(frontPose.Succeeded() && HasWarning(frontPose, "MDX_POSE_GENERIC_CAMERA_PREVIEW"),
         "有相机时 billboard 返回通用预览诊断");
-    Near(frontPose.value->chain[0].worldMatrix[4], 0, "正面相机不改变朝向 X");
-    Near(frontPose.value->chain[0].worldMatrix[5], 1, "正面相机指向 +Y");
+    Near(frontPose.value->chain[0].worldMatrix[0], 0, "YZ 平面法线的 X 分量");
+    Near(frontPose.value->chain[0].worldMatrix[1], 1, "billboard 本地 +X 朝相机 +Y");
     const MdxPoseCamera side{{16, 0, 0}, {0, 0, 1}};
     const auto sidePose = SampleMdxNodePose(model, {0, 500, 500, 0, side});
     Require(sidePose.Succeeded(), "侧面相机可求 billboard 预览");
-    Near(sidePose.value->chain[0].worldMatrix[4], 1, "billboard 的 +Y 朝向相机 +X");
+    Near(sidePose.value->chain[0].worldMatrix[0], 1, "billboard 的 +X 朝向相机 +X");
     Near(sidePose.value->chain[0].worldMatrix[13] + sidePose.value->chain[0].worldMatrix[1], 0,
         "billboard 后轴心世界位置不漂移");
     model.helpers[0].flags = 0x40;

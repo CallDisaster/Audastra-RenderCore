@@ -21,7 +21,13 @@ inline std::vector<std::byte> Bytes(std::uint32_t mode, bool global) {
             out.Tag("KGAC");out.U32(2);out.U32(mode);out.U32(global ? 0 : UINT32_MAX);
             for (const auto time:{0u,1000u}) {
                 out.U32(time);out.F32(time ? 0.0f : 1.0f);out.F32(0.25f);out.F32(time ? 1.0f : 0.0f);
-                if (mode>=2) for (int i=0;i<6;++i) out.F32(mode==2 ? 0 : 0.5f);
+                if (mode>=2) {
+                    // 同一 GEOA 的静态字段 RGB；KGAC 值/切线是 BGR，用非对称分量防止双错相消。
+                    const float inBgr[3]{mode==2 ? -0.125f : 0.25f,mode==2 ? 0.375f : 0.25f,mode==2 ? 0.625f : 0.75f};
+                    const float outBgr[3]{mode==2 ? -0.125f : 0.75f,mode==2 ? 0.375f : 0.25f,mode==2 ? 0.625f : 0.25f};
+                    for (const auto v:inBgr) out.F32(v);
+                    for (const auto v:outBgr) out.F32(v);
+                }
             }
             out.EndInclusive(object);out.EndChunk(chunk);
         }

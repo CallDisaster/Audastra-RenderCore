@@ -9,7 +9,7 @@
 
 namespace War3RenderCore {
 
-// 只描述 GEOA 静态 RGB；KGAC 不在本接口支持范围。解析器已将文件 BGR 转为 RGB。
+// 只描述 GEOA 静态 RGB，保持文件通道顺序；KGAC 的 BGR 轨迹不在本接口支持范围。
 // 不含指针，颜色保持原 float 位值；既不钳位，也不做伽马转换或 8 位量化。
 enum class GeosetColorError : std::uint32_t { None, Uninterpreted, InvalidNumber };
 struct GeosetColor {
