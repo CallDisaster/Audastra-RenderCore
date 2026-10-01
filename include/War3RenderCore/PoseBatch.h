@@ -10,7 +10,7 @@
 #include <span>
 
 namespace War3RenderCore {
-namespace Detail { struct BatchData; struct ExternalBatchData; struct GeosetPreviewData; }
+namespace Detail { struct BatchData; struct ExternalBatchData; struct GeosetPreviewData; struct MaterialBatchData; }
 
 enum class GeosetFailurePolicy : std::uint32_t { Strict = 0, PreviewHideInvalidGeosets = 1 };
 struct GeosetIssue {
@@ -36,6 +36,9 @@ public:
     [[nodiscard]] static War3Map::Result<PoseBatchEvaluator> Create(
         std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
         GeosetFailurePolicy policy);
+    [[nodiscard]] static War3Map::Result<PoseBatchEvaluator> Create(
+        std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
+        GeosetFailurePolicy policy, MaterialChannelOptions materials);
 
     // 专用模式：预热新回执且计入预算，不改变旧 Create 的存储估计或预算边界。
     // 两个模式不能互调 Evaluate；误用仍使前次输出失效。
@@ -65,6 +68,11 @@ public:
     [[nodiscard]] std::span<const float> Alphas(std::uint32_t instanceIndex) const noexcept;
     // RGB 与 Alphas 共用 geoset 序及回执片段；失败/下次求值后的寿命规则相同。
     [[nodiscard]] std::span<const Vec3> Colors(std::uint32_t instanceIndex) const noexcept;
+    [[nodiscard]] bool MaterialChannelsEnabled() const noexcept;
+    // 原material/layer唯一序；身份/借用期沿同一PoseReceipt，失败为空。
+    [[nodiscard]] std::span<const float> LayerAlphas(std::uint32_t instanceIndex) const noexcept;
+    // 每实例最多首个严格材质错误；物理来源不伪装成node objectId。
+    [[nodiscard]] std::span<const MaterialLayerIssue> MaterialIssues(std::uint32_t instanceIndex) const noexcept;
     [[nodiscard]] std::span<const PoseDiagnostic> Diagnostics(std::uint32_t instanceIndex) const noexcept;
     // 与对应姿势相同的借用期；严格模式/整实例失败为空，非空表示局部预览。
     [[nodiscard]] std::span<const GeosetIssue> GeosetIssues(std::uint32_t instanceIndex) const noexcept;
@@ -76,6 +84,7 @@ private:
     std::unique_ptr<Detail::ExternalBatchData> externalData_;
     // 独立预分配，仅显式容错模式使用；不改变严格 Create 或外部帧预算。
     std::unique_ptr<Detail::GeosetPreviewData> preview_;
+    std::unique_ptr<Detail::MaterialBatchData> materials_;
 };
 
 } // namespace War3RenderCore

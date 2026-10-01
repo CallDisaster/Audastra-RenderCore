@@ -58,6 +58,12 @@ template<std::size_t N> struct GeoChannel {
 };
 using Alpha = GeoChannel<1>;
 using ColorChannel = GeoChannel<3>;
+struct MaterialKeySource { std::uint64_t valueOffset; std::uint32_t frame, valueBits; };
+struct CompiledMaterialChannel {
+    Alpha alpha;
+    MaterialLayerIssue issue;
+    std::vector<MaterialKeySource> sources;
+};
 struct ModelData {
     AssetIdentity identity;
     AssetSource source;
@@ -73,6 +79,9 @@ struct ModelData {
     std::vector<Alpha> alphas;
     std::vector<GeosetColor> colors;
     std::vector<ColorChannel> colorTracks;
+    std::vector<MaterialLayerLayout> materialLayouts;
+    std::vector<CompiledMaterialChannel> materialAlphas;
+    bool animatedMaterialAlpha = false;
 };
 struct ModelAccess {
     static const ModelData* Get(const CompiledModel& model) noexcept { return model.data_.get(); }

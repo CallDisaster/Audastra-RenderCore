@@ -3,6 +3,7 @@
 
 #include "PoseMath.h"
 #include "GeosetChannels.h"
+#include "MaterialChannels.h"
 #include "../Render/Assets/MdxNormalPreview.h"
 #include "../Render/Assets/MdxRigidStaticPreviewInternal.h"
 
@@ -282,6 +283,27 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
         out->colors.push_back(g.animation ? CompileGeosetColor(g.animation->flags,
             g.animation->staticColor, g.animation->hasUninterpretedData) : GeosetColor{});
     }
+    Require(model.materials.size() <= hard.maxMaterials, Code::MaterialAlphaLimit);
+    std::size_t materialLayerCount = 0;
+    for (const auto& material : model.materials) {
+        Require(material.layers.size() <= hard.maxLayersPerMaterial, Code::MaterialAlphaLimit);
+        materialLayerCount += material.layers.size();
+    }
+    budget.Charge(materialLayerCount, sizeof(MaterialLayerLayout) + sizeof(CompiledMaterialChannel));
+    out->materialLayouts.reserve(materialLayerCount); out->materialAlphas.reserve(materialLayerCount);
+    for (std::uint32_t m = 0; m < model.materials.size(); ++m) {
+        const auto& material = model.materials[m];
+        Require(material.layers.size() <= hard.maxLayersPerMaterial, Code::MaterialAlphaLimit);
+        for (std::uint32_t l = 0; l < material.layers.size(); ++l) {
+            const auto& layer = material.layers[l];
+            // 原始键上限已在scalar编译中诊断；预算在reserve前计入实际所有者。
+            budget.Charge(layer.alphaKeys.size(), sizeof(GeoKey<1>) + sizeof(MaterialKeySource));
+            const MaterialLayerLayout layout{m, l, layer.animatedAlpha ? layer.alphaSourceByteOffset : layer.staticAlphaByteOffset};
+            out->materialLayouts.push_back(layout);
+            out->materialAlphas.push_back(CompileMaterialAlpha(layer, material.hasUninterpretedData, layout, model.globalSequences));
+            out->animatedMaterialAlpha |= layer.animatedAlpha;
+        }
+    }
     return out;
 }
 } // namespace
@@ -293,6 +315,11 @@ std::uint32_t CompiledModel::NodeCount() const noexcept { return data_ ? static_
 std::uint32_t CompiledModel::GroupCount() const noexcept { return data_ ? static_cast<std::uint32_t>(data_->groups.size()) : 0; }
 std::uint32_t CompiledModel::GeosetCount() const noexcept { return data_ ? static_cast<std::uint32_t>(data_->geosets.size()) : 0; }
 std::uint32_t CompiledModel::SequenceCount() const noexcept { return data_ ? static_cast<std::uint32_t>(data_->sequences.size()) : 0; }
+std::uint32_t CompiledModel::MaterialLayerCount() const noexcept { return data_ ? static_cast<std::uint32_t>(data_->materialLayouts.size()) : 0; }
+bool CompiledModel::HasAnimatedMaterialAlpha() const noexcept { return data_ && data_->animatedMaterialAlpha; }
+std::span<const MaterialLayerLayout> CompiledModel::MaterialLayerLayouts() const noexcept {
+    return data_ ? std::span<const MaterialLayerLayout>(data_->materialLayouts) : std::span<const MaterialLayerLayout>{};
+}
 NodeLayout CompiledModel::Node(std::uint32_t index) const noexcept {
     return data_ && index < data_->nodes.size() ? data_->nodes[index].layout : NodeLayout{};
 }

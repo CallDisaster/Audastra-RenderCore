@@ -54,15 +54,23 @@ enum class MdxFilterMode : std::uint32_t {
     None = 0, Transparent = 1, Blend = 2, Additive = 3, AddAlpha = 4, Modulate = 5, Modulate2x = 6,
 };
 
+struct MdxMaterialAlphaKey {
+    std::uint32_t frame = 0;
+    float value = 1.0f, inTangent = 0.0f, outTangent = 0.0f;
+    std::uint64_t sourceByteOffset = 0; // 原frame字段位置；value为+4，切线为+8/+12。
+};
 struct MdxLayer {
     MdxFilterMode filterMode = MdxFilterMode::None;
     std::uint32_t shadingFlags = 0; // 0x1 无光照、0x10 双面、0x40 不测深度、0x80 不写深度
     std::uint32_t textureId = 0;
-    float alpha = 1.0f;             // 静态值；层透明度轨迹未解释
+    float alpha = 1.0f;             // 没有KMTA时的真实静态值；不预乘GEOA。
     bool animatedTexture = false;   // 有贴图 ID 轨迹（KMTF）时为真，仍取静态 textureId
     bool animatedAlpha = false;
     std::uint32_t textureAnimationId = UINT32_MAX, coordId = 0;
     bool hasUninterpretedData = false; // 元数据仅供严格粒子材质门禁；不改变现有网格绘制。
+    std::uint32_t alphaInterpolation = 0, alphaGlobalSequence = UINT32_MAX;
+    std::uint64_t alphaSourceByteOffset = 0, staticAlphaByteOffset = 0;
+    std::vector<MdxMaterialAlphaKey> alphaKeys;
 };
 
 struct MdxMaterial {
@@ -287,6 +295,10 @@ struct MdxGeosetAlphaRequest {
 
 // 有界 KGAO 的阶梯/线性/Hermite/Bezier 通用预览；未知边界不合成补键。
 [[nodiscard]] Result<float> SampleMdxGeosetAlpha(const MdxModel& model, const MdxGeosetAlphaRequest& request);
+// 独立原始键参考；按material/layer唯一顺序，request.geosetIndex不使用。
+// 不调用RenderCore，不声称与原版逐帧等价；未知/坏层不回退static成功。
+[[nodiscard]] Result<std::vector<float>> SampleMdxLayerAlphas(
+    const MdxModel& model, const MdxGeosetAlphaRequest& request);
 
 // GEOA RGB 乘数。flags=0 返回白色；0x2 使用静态色或 KGAC；未知位/尾部明确拒绝。
 // 颜色曲线采用通用插值并夹到 0..1；与 alpha 共用请求身份，不声称原版逐帧一致。

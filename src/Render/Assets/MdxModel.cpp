@@ -88,6 +88,7 @@ void ParseTextures(Reader reader, MdxModel& model, const MdxLimits& limits) {
 }
 
 void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits) {
+    std::size_t retainedAlphaKeys = 0;
     while (reader.Remaining() != 0) {
         const auto materialStart = reader.Position();
         const auto materialBytes = reader.U32("材质大小");
@@ -112,13 +113,44 @@ void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits) {
             layer.textureId = reader.U32("层贴图 ID");
             layer.textureAnimationId = reader.U32("贴图动画 ID");
             layer.coordId = reader.U32("UV 组");
+            layer.staticAlphaByteOffset = reader.Position();
             layer.alpha = reader.F32("层透明度");
-            // 层内其余为动画轨迹；只记录是否有贴图 ID 轨迹。
+            // KMTA原键/物理来源保留；其它已知轨迹仍按旧规则标记跳过。
             while (reader.Position() + 16 <= layerStart + layerBytes) {
                 const auto tag = reader.PeekTag();
                 const auto valueBytes = TrackValueBytes(tag);
                 if (valueBytes == 0) break;
+                const auto trackOffset = reader.Position();
                 reader.Tag("层轨迹");
+                if (tag == "KMTA" && !layer.animatedAlpha) {
+                    layer.animatedAlpha = true; layer.alphaSourceByteOffset = trackOffset;
+                    auto track = reader.Until(layerStart + layerBytes, "KMTA层边界");
+                    const auto count = track.U32("KMTA按键数量");
+                    layer.alphaInterpolation = track.U32("KMTA插值类型");
+                    layer.alphaGlobalSequence = track.U32("KMTA全局序列");
+                    const std::size_t keyBytes = layer.alphaInterpolation > 1 ? 16u : 8u;
+                    if (count > limits.maxTrackKeys) Fail("MDX_LIMIT", "KMTA按键数量超过轨迹预算。");
+                    if (static_cast<std::uint64_t>(count) * keyBytes > track.Remaining())
+                        Fail("MDX_SIZE_INVALID", "KMTA按键字节越过材质层边界。");
+                    const auto retainedLimit = limits.maxInputBytes / sizeof(MdxMaterialAlphaKey);
+                    if (retainedAlphaKeys > retainedLimit || count > retainedLimit - retainedAlphaKeys)
+                        Fail("MDX_LIMIT", "KMTA拥有的原始键累计超过输入字节预算。");
+                    retainedAlphaKeys += count; layer.alphaKeys.reserve(count);
+                    for (std::uint32_t keyIndex = 0; keyIndex < count; ++keyIndex) {
+                        MdxMaterialAlphaKey key; key.sourceByteOffset = track.Position();
+                        key.frame = track.U32("KMTA帧");
+                        // 原始IEEE位保留；旧未启用材质路径仍不因此轨迹改变求值，
+                        // 显式材质模式在编译/求值时严格报告NaN与无效切线。
+                        key.value = std::bit_cast<float>(track.U32("KMTA值"));
+                        if (layer.alphaInterpolation > 1) {
+                            key.inTangent = std::bit_cast<float>(track.U32("KMTA入切线"));
+                            key.outTangent = std::bit_cast<float>(track.U32("KMTA出切线"));
+                        }
+                        layer.alphaKeys.push_back(key);
+                    }
+                    reader.Skip(track.Position() - reader.Position(), "KMTA已验证字节"); continue;
+                }
+                layer.hasUninterpretedData |= tag == "KMTA"; // 重复轨迹不选最后一条掩盖冲突。
                 layer.animatedTexture |= tag == "KMTF";
                 layer.animatedAlpha |= tag == "KMTA";
                 layer.hasUninterpretedData |= tag != "KMTF" && tag != "KMTA";
@@ -127,7 +159,7 @@ void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits) {
             if (reader.Position() > layerStart + layerBytes) Fail("MDX_SIZE_INVALID", "材质层轨迹越过层边界。");
             layer.hasUninterpretedData |= reader.Position() != layerStart + layerBytes;
             reader.Skip(layerStart + layerBytes - reader.Position(), "材质层其余字段");
-            material.layers.push_back(layer);
+            material.layers.push_back(std::move(layer));
         }
         if (reader.Position() > materialEnd) Fail("MDX_SIZE_INVALID", "材质层越过材质边界。");
         material.hasUninterpretedData = reader.Position() != materialEnd;
@@ -559,6 +591,68 @@ Result<MdxModel> ParseMdxRigidStaticPreview(std::span<const std::byte> bytes, co
 }
 
 #include "MdxGeosetSample.inl"
+
+Result<std::vector<float>> SampleMdxLayerAlphas(const MdxModel& model, const MdxGeosetAlphaRequest& request) {
+    using Out = Result<std::vector<float>>;
+    if (request.sequenceIndex >= model.sequences.size() || !model.sequences[request.sequenceIndex].Usable())
+        return Out::Failure("Mdx.MaterialAlpha", "MDX_MATERIAL_ALPHA_REFERENCE_INVALID", "材质采样动作不存在或不可用。");
+    if (model.materials.size() > MdxLimits{}.maxMaterials)
+        return Out::Failure("Mdx.MaterialAlpha", "MDX_MATERIAL_ALPHA_LIMIT", "材质数量超过硬上限。");
+    try {
+        std::vector<float> values;
+        for (std::size_t m = 0; m < model.materials.size(); ++m) {
+            const auto& material = model.materials[m];
+            if (material.layers.size() > MdxLimits{}.maxLayersPerMaterial)
+                return Out::Failure("Mdx.MaterialAlpha", "MDX_MATERIAL_ALPHA_LIMIT", "层数量超过硬上限。");
+            for (std::size_t l = 0; l < material.layers.size(); ++l) {
+                const auto& layer = material.layers[l];
+                if (material.hasUninterpretedData || layer.hasUninterpretedData)
+                    return Out::Failure("Mdx.MaterialAlpha", "MDX_MATERIAL_ALPHA_UNINTERPRETED", "材质/层含未解释数据；不取静态alpha成功值。");
+                auto sampled = SampleGeoReference<1>(model, request, {layer.alpha}, layer.animatedAlpha,
+                    layer.alphaInterpolation, layer.alphaGlobalSequence, layer.alphaKeys);
+                if (!sampled.Succeeded()) {
+                    for (auto& diagnostic : sampled.diagnostics) {
+                        diagnostic.subsystem = "Mdx.MaterialAlpha";
+                        if (diagnostic.code.starts_with("MDX_GEOA_")) diagnostic.code.replace(0, 9, "MDX_MATERIAL_ALPHA_");
+                        diagnostic.message = "材质" + std::to_string(m) + "/层" + std::to_string(l) + "：" + diagnostic.message;
+                        auto offset = layer.animatedAlpha ? layer.alphaSourceByteOffset : layer.staticAlphaByteOffset;
+                        std::uint32_t sourceBits = std::bit_cast<std::uint32_t>(layer.alpha);
+                        if (diagnostic.code == "MDX_MATERIAL_ALPHA_INTERPOLATION_UNSUPPORTED") {
+                            offset += 8; sourceBits = layer.alphaInterpolation;
+                        } else if (diagnostic.code == "MDX_MATERIAL_ALPHA_GLOBAL_SEQUENCE_UNSUPPORTED") {
+                            offset += 12; sourceBits = layer.alphaGlobalSequence;
+                        } else if (layer.animatedAlpha && std::isfinite(layer.alpha)) {
+                            std::uint32_t previous = 0; bool first = true;
+                            for (const auto& key : layer.alphaKeys) {
+                                const bool value = !std::isfinite(key.value);
+                                const bool in = layer.alphaInterpolation >= 2 && !std::isfinite(key.inTangent);
+                                const bool out = layer.alphaInterpolation >= 2 && !std::isfinite(key.outTangent);
+                                if (value || in || out) {
+                                    offset = key.sourceByteOffset + (value ? 4 : in ? 8 : 12);
+                                    sourceBits = std::bit_cast<std::uint32_t>(value ? key.value : in ? key.inTangent : key.outTangent); break;
+                                }
+                                if ((!first && key.frame <= previous) || (layer.alphaGlobalSequence != UINT32_MAX
+                                    && static_cast<std::uint64_t>(key.frame) - layer.alphaKeys.front().frame > INT32_MAX)) {
+                                    offset = key.sourceByteOffset; sourceBits = key.frame; break;
+                                }
+                                first = false; previous = key.frame;
+                            }
+                        }
+                        diagnostic.origin = OriginSpan{{}, offset, 4, {}};
+                        diagnostic.message += " 源值位模式=" + std::to_string(sourceBits) + "。";
+                    }
+                    return {std::nullopt, std::move(sampled.diagnostics)};
+                }
+                values.push_back((*sampled.value)[0]);
+            }
+        }
+        return Out::Success(std::move(values));
+    } catch (const std::bad_alloc&) {
+        return Out::Failure("Mdx.MaterialAlpha", "MDX_ALLOCATION", "材质参考输出分配失败。");
+    } catch (const std::length_error&) {
+        return Out::Failure("Mdx.MaterialAlpha", "MDX_ALLOCATION", "材质参考输出容量无效。");
+    }
+}
 
 std::string MdxModelFile(std::string_view modelField, std::uint32_t variation, std::uint32_t variationCount) {
     std::string base(modelField);

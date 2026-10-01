@@ -144,9 +144,12 @@ enum class Code : std::uint32_t {
     PoseGlobalSpanUnsupported, GeoaGlobalSpanUnsupported,
     ExternalFrameContextInvalid, ExternalFrameVersionInvalid, ExternalFrameSourceInvalid,
     ExternalFrameStale, ExternalFrameLayoutInvalid, ExternalChannelCountInvalid, ExternalChannelRangeInvalid,
+    MaterialAlphaUninterpreted, MaterialAlphaNumberInvalid, MaterialAlphaInterpolationUnsupported,
+    MaterialAlphaGlobalSequenceUnsupported, MaterialAlphaKeysInvalid, MaterialAlphaBoundaryUnsupported,
+    MaterialAlphaGlobalSpanUnsupported, MaterialAlphaLimit,
 };
 enum class Severity : std::uint32_t { Warning = 0, Error = 1 };
-enum class TrackKind : std::uint32_t { None = 0, Translation = 1, Rotation = 2, Scale = 3 };
+enum class TrackKind : std::uint32_t { None = 0, Translation = 1, Rotation = 2, Scale = 3, MaterialAlpha = 4 };
 struct alignas(8) PoseDiagnostic {
     Code code = Code::Ok;
     Severity severity = Severity::Error;

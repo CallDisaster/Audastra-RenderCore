@@ -75,6 +75,14 @@ DiagnosticText Text(Code code) noexcept {
     case Code::ExternalFrameLayoutInvalid: return {"RENDER_CORE_EXTERNAL_FRAME_LAYOUT_INVALID", "已求值帧必须为48字节列主序3x4，并明确使用ModelLocal/未乘世界矩阵或World/已乘世界矩阵。"};
     case Code::ExternalChannelCountInvalid: return {"RENDER_CORE_EXTERNAL_CHANNEL_COUNT_INVALID", "外部alpha或RGB数量与编译资产的全部geoset数量不符，不允许补默认值。"};
     case Code::ExternalChannelRangeInvalid: return {"RENDER_CORE_EXTERNAL_CHANNEL_RANGE_INVALID", "外部alpha或RGB片段超出输入跨度。"};
+    case Code::MaterialAlphaUninterpreted: return {"MDX_MATERIAL_ALPHA_UNINTERPRETED", "材质层含未知或重复轨迹；未使用静态alpha假成功。"};
+    case Code::MaterialAlphaNumberInvalid: return {"MDX_MATERIAL_ALPHA_NUMBER_INVALID", "KMTA静态值、键、切线或求值结果不是有限数。"};
+    case Code::MaterialAlphaInterpolationUnsupported: return {"MDX_MATERIAL_ALPHA_INTERPOLATION_UNSUPPORTED", "KMTA插值类型不支持。"};
+    case Code::MaterialAlphaGlobalSequenceUnsupported: return {"MDX_MATERIAL_ALPHA_GLOBAL_SEQUENCE_UNSUPPORTED", "KMTA全局序列引用不存在。"};
+    case Code::MaterialAlphaKeysInvalid: return {"MDX_MATERIAL_ALPHA_KEYS_INVALID", "KMTA键未严格递增；不排序或删除原键。"};
+    case Code::MaterialAlphaBoundaryUnsupported: return {"MDX_MATERIAL_ALPHA_BOUNDARY_UNSUPPORTED", "KMTA采样边界尚不支持，不补默认透明度。"};
+    case Code::MaterialAlphaGlobalSpanUnsupported: return {"MDX_MATERIAL_ALPHA_GLOBAL_SPAN_UNSUPPORTED", "KMTA归零帧跨度超过已界定有符号范围。"};
+    case Code::MaterialAlphaLimit: return {"MDX_MATERIAL_ALPHA_LIMIT", "KMTA轨迹或层数量超过有界预算。"};
     }
     return {"RENDER_CORE_UNKNOWN_DIAGNOSTIC", "未知诊断编号。"};
 }

@@ -5,6 +5,11 @@
 #include "ModelData.h"
 #include "War3RenderCore/PoseBatch.h"
 namespace War3RenderCore::Detail {
+// 材质复用同一标量计算次序；来源/错误编号由MaterialChannels独立绑定。
+Alpha CompileMaterialScalarAlpha(const War3Map::Render::MdxLayer& source,
+    const std::vector<std::uint32_t>& periods);
+float SampleScalarAlpha(const Alpha& channel, const Sequence& sequence, std::uint32_t frame,
+    std::uint64_t global, Evaluation& e) noexcept;
 Alpha CompileGeosetAlpha(const std::optional<War3Map::Render::MdxGeosetAnimation>& source,
     const std::vector<std::uint32_t>& periods);
 ColorChannel CompileGeosetRgb(const std::optional<War3Map::Render::MdxGeosetAnimation>& source,

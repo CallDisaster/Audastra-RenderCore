@@ -6,6 +6,7 @@
 #include "War3RenderCore/Result.h"
 #include "War3RenderCore/PoseTypes.h"
 #include "War3RenderCore/GeosetColor.h"
+#include "War3RenderCore/MaterialChannels.h"
 
 #include <memory>
 #include <span>
@@ -26,6 +27,9 @@ public:
     [[nodiscard]] std::uint32_t GroupCount() const noexcept;
     [[nodiscard]] std::uint32_t GeosetCount() const noexcept;
     [[nodiscard]] std::uint32_t SequenceCount() const noexcept;
+    [[nodiscard]] std::uint32_t MaterialLayerCount() const noexcept;
+    [[nodiscard]] bool HasAnimatedMaterialAlpha() const noexcept;
+    [[nodiscard]] std::span<const MaterialLayerLayout> MaterialLayerLayouts() const noexcept;
     [[nodiscard]] NodeLayout Node(std::uint32_t index) const noexcept;
     [[nodiscard]] std::span<const GeosetLayout> Geosets() const noexcept;
     [[nodiscard]] std::span<const std::uint32_t> VertexGroups() const noexcept;

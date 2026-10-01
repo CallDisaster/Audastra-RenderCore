@@ -63,6 +63,45 @@ int main() {
         empty.contentVersion = 1; empty.matrixFormat = WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4; empty.matrixStrideBytes = 48;
         War3RenderSkinnedModelSceneV2 clear{}; clear.structSize = sizeof(clear); clear.initialPose = &empty;
         ModelScene cleared; Check(CopySkinnedModelInput(clear,cleared,bytes) && cleared.vertices.empty());
+        // 可选新尾部与旧描述分开：每实例实际draw层alpha拥有自己的完整片段。
+        War3RenderMaterialSkinUpdateV2 material{}; material.base.base = fixture.Update();
+        material.base.base.structSize = sizeof(material); material.layerAlphaFormat = WAR3_RENDER_DYNAMIC_LAYER_ALPHA_V1;
+        float layerAlphas[]{1, .5f}; War3RenderMaterialLayerSliceV2 layerSlices[]{{0, 1}, {1, 1}};
+        material.layerAlphaCount = 2; material.instanceSliceCount = 2;
+        material.layerAlphas = layerAlphas; material.instanceSlices = layerSlices;
+        auto materialDescription = fixture.Scene(material.base.base); ModelScene materialScene;
+        Check(CopySkinnedModelInput(materialDescription, materialScene, bytes));
+        Check(materialScene.dynamicMaterialAlphas && !materialScene.dynamicColors && materialScene.modelLayerCounts == std::vector<std::uint32_t>{1}
+            && materialScene.initialSkin->layerAlphas == std::vector<float>({1, .5f}));
+        layerAlphas[1] = .25f;
+        Check(materialScene.initialSkin->layerAlphas[1] == .5f && CopySkinUpdate(material.base.base, materialScene, pose) && pose.layerAlphas[1] == .25f);
+        const auto rejectMaterial = [&] { SkinPose temporary; Check(!CopySkinUpdate(material.base.base, materialScene, temporary)); };
+        material.layerAlphas = nullptr; rejectMaterial(); material.layerAlphas = layerAlphas;
+        material.instanceSliceCount = 1; rejectMaterial(); material.instanceSliceCount = 2;
+        layerSlices[1].count = 2; rejectMaterial(); layerSlices[1].count = 1;
+        layerSlices[1].first = 0; rejectMaterial(); layerSlices[1].first = 1;
+        layerAlphas[1] = std::numeric_limits<float>::quiet_NaN(); rejectMaterial(); layerAlphas[1] = .25f;
+        material.reserved = 1; rejectMaterial(); material.reserved = 0;
+        material.base.colorCount = 2; rejectMaterial(); material.base.colorCount = 0;
+        material.layerAlphaFormat = 99; rejectMaterial(); material.layerAlphaFormat = WAR3_RENDER_DYNAMIC_LAYER_ALPHA_V1;
+        material.base.base.sceneVersion = 2; ModelScene roster;
+        Check(CopySkinRoster(material.base.base, materialScene, roster) && roster.dynamicMaterialAlphas && roster.modelLayerCounts == materialScene.modelLayerCounts);
+        auto legacyRoster = fixture.Update(2); legacyRoster.sceneVersion = 2; Check(!CopySkinRoster(legacyRoster, materialScene, roster));
+        material.base.base.instanceCount = material.base.base.groupCount = material.base.base.alphaCount = 0;
+        material.layerAlphaCount = material.instanceSliceCount = 0;
+        Check(CopySkinRoster(material.base.base, materialScene, roster) && roster.initialSkin->instances.empty()
+            && roster.dynamicMaterialAlphas && roster.initialSkin->layerAlphas.empty());
+        // 共享片段只能由同模型完整别名；额外材质通道不允许部分重叠或跨模型。
+        material.base.base = shared; material.base.base.structSize = sizeof(material);
+        material.layerAlphaCount = material.instanceSliceCount = 2; layerSlices[1].first = 0;
+        fixture.instances[1].firstGroup = fixture.instances[1].firstAlpha = 0;
+        ModelScene materialShared; auto materialSharedDescription = fixture.Scene(material.base.base);
+        Check(CopySkinnedModelInput(materialSharedDescription, materialShared, bytes));
+        materialShared.initialSkin.reset(); materialShared.models.push_back(materialShared.models[0]);
+        materialShared.modelGroupCounts.push_back(1); materialShared.modelLayerCounts.push_back(1);
+        fixture.instances[1].instance.model = 1; fixture.instances[1].firstGroup = fixture.instances[1].firstAlpha = 1;
+        Check(!CopySkinUpdate(material.base.base, materialShared, pose));
+        fixture.instances[1].instance.model = 0; fixture.instances[1].firstGroup = fixture.instances[1].firstAlpha = 1;
         static_assert(offsetof(War3RenderPluginApiV2,submitSkinnedModelScene)
             == offsetof(War3RenderPluginApiV2,setOverlayLines) + sizeof(War3RenderPluginApiV2::setOverlayLines));
         // 0.1.0 的 28 个函数指针前缀尺寸在 x64/Win32 均保持不变。
@@ -87,7 +126,7 @@ int main() {
             && sizeof(War3RenderFrameMetricsPageV2) == 304
             && offsetof(War3RenderFrameMetricsPageV2, oldestFrame) == 16
             && offsetof(War3RenderFrameMetricsPageV2, adapterName) == 48);
-        std::cout << "skin_input copied=1 range_layout_count_rejections=1 recovery=1 old_tail_unchanged=1\n";
+        std::cout << "skin_input copied=1 range_layout_count_rejections=1 recovery=1 old_tail_unchanged=1 material_alpha_owned=1 material_roster_empty=1\n";
         std::cout << "frame_metrics_abi pointer_bytes=" << sizeof(void*) << " api_bytes=" << sizeof(War3RenderPluginApiV2)
             << " tail_offset=" << offsetof(War3RenderPluginApiV2, getFrameMetrics)
             << " record_bytes=" << sizeof(War3RenderFrameMetricsV2) << " page_bytes=" << sizeof(War3RenderFrameMetricsPageV2) << '\n';

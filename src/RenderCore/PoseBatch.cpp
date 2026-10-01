@@ -4,6 +4,7 @@
 #include "War3RenderCore/PoseBatch.h"
 #include "PoseTracks.h"
 #include "GeosetChannels.h"
+#include "MaterialChannels.h"
 
 #include <algorithm>
 #include <cmath>
@@ -36,6 +37,12 @@ struct ExternalBatchData {
 struct GeosetPreviewData {
     std::vector<GeosetIssue> issues;
     std::vector<Range32> ranges;
+    std::uint64_t storageBytes = 0;
+};
+struct MaterialBatchData {
+    std::vector<float> alphas;
+    std::vector<Range32> ranges;
+    std::vector<MaterialLayerIssue> issues;
     std::uint64_t storageBytes = 0;
 };
 } // namespace Detail
@@ -235,6 +242,28 @@ War3Map::Result<PoseBatchEvaluator> PoseBatchEvaluator::Create(
     catch (const std::length_error&) { return failure(Code::AllocationFailed); }
 }
 
+War3Map::Result<PoseBatchEvaluator> PoseBatchEvaluator::Create(
+    std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
+    GeosetFailurePolicy policy, MaterialChannelOptions materials) {
+    const auto failure = [](Code code) {
+        return War3Map::Result<PoseBatchEvaluator>::Failure("RenderCore.Prepare", CodeName(code), CodeMessage(code));
+    };
+    if (materials.enabled > 1 || (materials.enabled && (!materials.maxLayerValues || materials.maxLayerValues > 16777216u)))
+        return failure(Code::RequestInvalid);
+    auto result = Create(assets, evaluationEpoch, limits, policy);
+    if (!result.Succeeded() || !materials.enabled) return result;
+    const auto bytes = sizeof(MaterialBatchData) + static_cast<std::uint64_t>(materials.maxLayerValues) * sizeof(float)
+        + static_cast<std::uint64_t>(limits.maxInstances) * (sizeof(Range32) + sizeof(MaterialLayerIssue));
+    if (bytes > limits.maxBytes - result.value->StorageBytes()) return failure(Code::CapacityExceeded);
+    try {
+        auto data = std::make_unique<MaterialBatchData>();
+        data->alphas.resize(materials.maxLayerValues); data->ranges.resize(limits.maxInstances);
+        data->issues.resize(limits.maxInstances); data->storageBytes = bytes;
+        result.value->materials_ = std::move(data); return result;
+    } catch (const std::bad_alloc&) { return failure(Code::AllocationFailed); }
+    catch (const std::length_error&) { return failure(Code::AllocationFailed); }
+}
+
 BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
     std::span<const GroupMatrix> externalGroups, std::span<const BoneOverride> overrides) noexcept {
     if (!data_) return {Code::RequestInvalid, 0, 0};
@@ -244,8 +273,9 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
     // 即使没有实例引用该池，也不能静默忽略宿主传入的覆盖。
     if (!overrides.empty()) return {Code::OverrideUnsupported, 0, 0};
     if (requests.size() > data.limits.maxInstances) return {Code::CapacityExceeded, 0, 0};
-    if (Overlaps(externalGroups, data.groups)) return {Code::RequestInvalid, 0, 0};
-    std::uint64_t nodesNeeded = 0, groupsNeeded = 0, alphasNeeded = 0;
+    if (Overlaps(externalGroups, data.groups) || (materials_ && ByteOverlaps(externalGroups, std::span(materials_->alphas))))
+        return {Code::RequestInvalid, 0, 0};
+    std::uint64_t nodesNeeded = 0, groupsNeeded = 0, alphasNeeded = 0, layersNeeded = 0;
     for (std::size_t i = 0; i < requests.size(); ++i) {
         const auto& r = requests[i];
         data.identities[i] = r.instance;
@@ -253,22 +283,26 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
             const auto& a = data.assets[r.assetIndex];
             if (r.source == PoseSource::Computed) nodesNeeded += a.NodeCount();
             groupsNeeded += a.GroupCount(); alphasNeeded += a.GeosetCount();
+            if (materials_) layersNeeded += a.MaterialLayerCount();
         }
     }
-    if (nodesNeeded > data.limits.maxNodes || groupsNeeded > data.limits.maxGroups || alphasNeeded > data.limits.maxGeosets)
+    if (nodesNeeded > data.limits.maxNodes || groupsNeeded > data.limits.maxGroups || alphasNeeded > data.limits.maxGeosets
+        || (materials_ && layersNeeded > materials_->alphas.size()))
         return {Code::CapacityExceeded, 0, 0};
     const auto identities = std::span(data.identities).first(requests.size());
     std::sort(identities.begin(), identities.end(), [](const auto& a, const auto& b) { return LessIdentity(a, b); });
     for (std::size_t i = 1; i < identities.size(); ++i)
         if (identities[i] == identities[i - 1]) return {Code::DuplicateInstance, 0, 0};
 
-    std::uint32_t nodeOffset = 0, groupOffset = 0, alphaOffset = 0, diagnosticOffset = 0, failed = 0;
+    std::uint32_t nodeOffset = 0, groupOffset = 0, alphaOffset = 0, layerOffset = 0, diagnosticOffset = 0, failed = 0;
     for (std::size_t i = 0; i < requests.size(); ++i) {
         const auto& r = requests[i];
         const auto* asset = r.assetIndex < data.assets.size() ? &data.assets[r.assetIndex] : nullptr;
         const auto nodeCount = asset && r.source == PoseSource::Computed ? asset->NodeCount() : 0;
         const auto groupCount = asset ? asset->GroupCount() : 0;
         const auto alphaCount = asset ? asset->GeosetCount() : 0;
+        const auto layerCount = asset && materials_ ? asset->MaterialLayerCount() : 0;
+        if (materials_) { materials_->ranges[i] = {}; materials_->issues[i] = {}; }
         const auto diagnosticCapacity = 4 * nodeCount + 1; // 每节点最多两条样条 + 两条相机警告
         PoseReceipt receipt;
         receipt.instance = r.instance; receipt.asset = r.asset; receipt.source = r.source;
@@ -283,6 +317,11 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         if (!asset) e.Fail(Code::AssetIndexInvalid);
         else EvaluateOne(*asset, r, externalGroups, std::span(data.nodes).subspan(compact ? 0 : nodeOffset, nodeCount),
             std::span(data.groups).subspan(groupOffset, groupCount), std::span(data.alphas).subspan(alphaOffset, alphaCount), std::span(data.colors).subspan(alphaOffset,alphaCount), receipt, e, preview_.get(), issues, issueCount);
+        if (e.Good() && materials_) {
+            const auto& model = *ModelAccess::Get(*asset);
+            (void)EvaluateMaterialAlphas(model, model.sequences[r.sequenceIndex], receipt.sequenceFrame, r.globalElapsedMs,
+                std::span(materials_->alphas).subspan(layerOffset, layerCount), materials_->issues[i], e);
+        }
         if (e.Good() && data.lastVersion == UINT64_MAX) e.Fail(Code::VersionExhausted);
         if (!e.Good()) {
             ++failed;
@@ -294,8 +333,10 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         } else receipt.poseVersion = ++data.lastVersion;
         receipt.diagnostics = {diagnosticOffset, e.used};
         data.receipts[i] = receipt;
+        if (materials_ && e.Good()) materials_->ranges[i] = {layerOffset, layerCount};
         if (preview_) preview_->ranges[i] = {alphaOffset, issueCount};
         nodeOffset += nodeCount; groupOffset += groupCount; alphaOffset += alphaCount;
+        layerOffset += layerCount;
         diagnosticOffset += diagnosticCapacity;
     }
     data.active = static_cast<std::uint32_t>(requests.size());
@@ -308,7 +349,7 @@ BatchOutcome PoseBatchEvaluator::EvaluateExternalFrames(std::span<const External
     if (!data_) return {Code::RequestInvalid, 0, 0};
     auto& data = *data_;
     data.active = 0;
-    if (!externalData_) return {Code::RequestInvalid, 0, 0};
+    if (!externalData_ || materials_) return {Code::RequestInvalid, 0, 0};
     if (context.contractVersion != ExternalFrameContractVersion || !SupportedSource(context.source)
         || context.sourceEpoch == 0 || context.frameVersion == 0) return {Code::ExternalFrameContextInvalid, 0, 0};
     if (requests.size() > data.limits.maxInstances) return {Code::CapacityExceeded, 0, 0};
@@ -366,7 +407,7 @@ BatchOutcome PoseBatchEvaluator::EvaluateExternalFrames(std::span<const External
 }
 
 std::uint64_t PoseBatchEvaluator::StorageBytes() const noexcept {
-    return data_ ? data_->storageBytes + (preview_ ? preview_->storageBytes : 0) : 0;
+    return data_ ? data_->storageBytes + (preview_ ? preview_->storageBytes : 0) + (materials_ ? materials_->storageBytes : 0) : 0;
 }
 
 std::span<const PoseReceipt> PoseBatchEvaluator::Receipts() const noexcept {
@@ -395,6 +436,16 @@ std::span<const Vec3> PoseBatchEvaluator::Colors(std::uint32_t index) const noex
     if (!data_ || index >= data_->active || data_->receipts[index].error != Code::Ok) return {};
     const auto range = data_->receipts[index].alphas;
     return std::span<const Vec3>(data_->colors).subspan(range.offset,range.count);
+}
+bool PoseBatchEvaluator::MaterialChannelsEnabled() const noexcept { return materials_ != nullptr; }
+std::span<const float> PoseBatchEvaluator::LayerAlphas(std::uint32_t index) const noexcept {
+    if (!data_ || !materials_ || index >= data_->active || data_->receipts[index].error != Code::Ok) return {};
+    const auto range = materials_->ranges[index];
+    return std::span<const float>(materials_->alphas).subspan(range.offset, range.count);
+}
+std::span<const MaterialLayerIssue> PoseBatchEvaluator::MaterialIssues(std::uint32_t index) const noexcept {
+    if (!data_ || !materials_ || index >= data_->active || materials_->issues[index].error == Code::Ok) return {};
+    return std::span<const MaterialLayerIssue>(materials_->issues).subspan(index, 1);
 }
 std::span<const PoseDiagnostic> PoseBatchEvaluator::Diagnostics(std::uint32_t index) const noexcept {
     if (!data_ || index >= data_->active) return {};

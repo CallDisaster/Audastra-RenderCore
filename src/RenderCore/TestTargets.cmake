@@ -112,6 +112,13 @@ endif()
 add_test(NAME render-geoset-channels COMMAND war3-geoset-channels-tests)
 set_tests_properties(render-geoset-channels PROPERTIES TIMEOUT 60)
 
+add_executable(war3-material-channels-tests "${_render_core_repo}/tests/MaterialChannelTests.cpp"
+    "${_render_core_repo}/tests/RenderCoreAllocProbe.cpp" "${_render_core_repo}/src/Render/Assets/MdxModel.cpp")
+target_link_libraries(war3-material-channels-tests PRIVATE War3RenderCore::CPU)
+war3_render_core_options(war3-material-channels-tests)
+add_test(NAME render-material-channels COMMAND war3-material-channels-tests)
+set_tests_properties(render-material-channels PROPERTIES TIMEOUT 60)
+
 # 解析器原测试随唯一上游迁移，保留 FORGE 的原 CTest 名称。
 add_executable(war3-map-MdxModel-tests "${_render_core_repo}/tests/MdxModelTests.cpp")
 target_link_libraries(war3-map-MdxModel-tests PRIVATE War3RenderCore::CPU)

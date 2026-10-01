@@ -16,6 +16,39 @@ bool Unit(float v) { return std::isfinite(v) && v >= 0 && v <= 1; }
 template<class T> void Copy(std::vector<T>& target, const T* source, std::uint32_t count) {
     if (count) target.assign(source, source + count);
 }
+bool SkinModes(const War3RenderSkinUpdateV2& input,
+    const War3RenderDynamicColoredSkinUpdateV2*& colored,
+    const War3RenderMaterialSkinUpdateV2*& material) {
+    colored = nullptr; material = nullptr;
+    if (input.structSize == sizeof(input)) return true;
+    if (input.structSize == sizeof(War3RenderMaterialSkinUpdateV2)) {
+        material = reinterpret_cast<const War3RenderMaterialSkinUpdateV2*>(&input);
+        if (material->layerAlphaFormat != WAR3_RENDER_DYNAMIC_LAYER_ALPHA_V1 || material->reserved
+            || material->layerAlphaCount > 1048576 || material->instanceSliceCount != input.instanceCount
+            || (material->layerAlphaCount && !material->layerAlphas)
+            || (material->instanceSliceCount && !material->instanceSlices)) return false;
+        if (!material->base.colorFormat)
+            return !material->base.colorCount && !material->base.colors;
+        colored = &material->base;
+    } else if (input.structSize == sizeof(War3RenderDynamicColoredSkinUpdateV2)) {
+        colored = reinterpret_cast<const War3RenderDynamicColoredSkinUpdateV2*>(&input);
+    } else return false;
+    return colored->colorFormat == WAR3_RENDER_DYNAMIC_MESH_RGB_V1
+        && colored->colorCount == input.alphaCount && (!colored->colorCount || colored->colors);
+}
+bool BindModelLayerCounts(ModelScene& scene, bool enabled) {
+    scene.dynamicMaterialAlphas = enabled; scene.modelLayerCounts.clear();
+    if (!enabled) return true;
+    scene.modelLayerCounts.reserve(scene.models.size());
+    for (const auto& model : scene.models) {
+        if (model.firstMesh > scene.meshes.size() || model.meshCount > scene.meshes.size() - model.firstMesh) return false;
+        std::uint64_t count = 0;
+        for (auto i = model.firstMesh; i < model.firstMesh + model.meshCount; ++i) count += scene.meshes[i].layerCount;
+        if (!count || count > 131072) return false;
+        scene.modelLayerCounts.push_back(static_cast<std::uint32_t>(count));
+    }
+    return true;
+}
 }
 bool ValidateModelGeometry(const ModelScene& scene, std::uint32_t textureCount) {
     for (const auto& vertex : scene.vertices) {
@@ -53,28 +86,33 @@ bool CopySkinUpdate(const War3RenderSkinUpdateV2& input, const ModelScene& scene
         || (input.instanceCount && !input.instances) || (input.groupCount && !input.groups)
         || (input.alphaCount && !input.alphas)) return false;
     const War3RenderDynamicColoredSkinUpdateV2* colored = nullptr;
-    if (input.structSize != sizeof(input)) {
-        if (input.structSize != sizeof(War3RenderDynamicColoredSkinUpdateV2)) return false;
-        colored = reinterpret_cast<const War3RenderDynamicColoredSkinUpdateV2*>(&input);
-        if (colored->colorFormat != WAR3_RENDER_DYNAMIC_MESH_RGB_V1 || colored->colorCount != input.alphaCount ||
-            (colored->colorCount != 0 && !colored->colors)) return false;
-    }
+    const War3RenderMaterialSkinUpdateV2* material = nullptr;
+    if (!SkinModes(input, colored, material) || bool(material) != scene.dynamicMaterialAlphas
+        || (material ? scene.modelLayerCounts.size() != scene.models.size() : !scene.modelLayerCounts.empty())) return false;
     const std::uint64_t bytes = static_cast<std::uint64_t>(input.instanceCount) * sizeof(War3RenderSkinnedModelInstanceV2)
         + static_cast<std::uint64_t>(input.groupCount) * sizeof(War3RenderGroupMatrixV2)
-        + static_cast<std::uint64_t>(input.alphaCount) * (sizeof(float) + (colored ? sizeof(War3RenderMeshColorV2) : 0));
+        + static_cast<std::uint64_t>(input.alphaCount) * (sizeof(float) + (colored ? sizeof(War3RenderMeshColorV2) : 0))
+        + (material ? static_cast<std::uint64_t>(material->layerAlphaCount) * sizeof(float)
+            + static_cast<std::uint64_t>(material->instanceSliceCount) * sizeof(War3RenderMaterialLayerSliceV2) : 0);
     if (bytes > 64ull * 1024 * 1024 || scene.modelGroupCounts.size() != scene.models.size()) return false;
     Copy(pose.instances, input.instances, input.instanceCount);
     Copy(pose.groups, input.groups, input.groupCount); Copy(pose.alphas, input.alphas, input.alphaCount);
     if (colored) {
         for (std::uint32_t i=0;i<colored->colorCount;++i) for (const auto v:colored->colors[i].rgb) if (!Unit(v)) return false;
         Copy(pose.colors,colored->colors,colored->colorCount);
-    }
+    } else pose.colors.clear();
+    pose.dynamicMaterialAlphas = material != nullptr;
+    if (material) {
+        pose.layerAlphas.clear(); pose.layerSlices.clear();
+        Copy(pose.layerAlphas, material->layerAlphas, material->layerAlphaCount);
+        Copy(pose.layerSlices, material->instanceSlices, material->instanceSliceCount);
+    } else { pose.layerAlphas.clear(); pose.layerSlices.clear(); }
     pose.sceneVersion = input.sceneVersion; pose.contentVersion = input.contentVersion;
     pose.matrixFormat = input.matrixFormat;
-    std::uint64_t groupEnd = 0, alphaEnd = 0;
+    std::uint64_t groupEnd = 0, alphaEnd = 0, layerEnd = 0;
     // 只允许同模型完整片段别名；跨模型和部分重叠都不是合法共享。
     struct Slice { std::uint32_t end, model; };
-    std::map<std::uint32_t, Slice> groupSlices, alphaSlices;
+    std::map<std::uint32_t, Slice> groupSlices, alphaSlices, layerSlices;
     const auto bindSlice = [](auto& slices, std::uint32_t first, std::uint32_t count,
         std::size_t capacity, std::uint32_t model) {
         if (!count || first > capacity || count > capacity - first) return false;
@@ -88,7 +126,8 @@ bool CopySkinUpdate(const War3RenderSkinUpdateV2& input, const ModelScene& scene
         return true;
     };
     std::uint32_t previous = 0;
-    for (const auto& instance : pose.instances) {
+    for (std::size_t i = 0; i < pose.instances.size(); ++i) {
+        const auto& instance = pose.instances[i];
         const auto model = instance.instance.model;
         if (model >= scene.models.size() || model < previous)
             return false;
@@ -101,19 +140,37 @@ bool CopySkinUpdate(const War3RenderSkinUpdateV2& input, const ModelScene& scene
             groupEnd += scene.modelGroupCounts[model]; alphaEnd += scene.models[model].meshCount;
             if (groupEnd > pose.groups.size() || alphaEnd > pose.alphas.size()) return false;
         }
+        if (material) {
+            const auto& slice = pose.layerSlices[i];
+            if (slice.count != scene.modelLayerCounts[model]) return false;
+            if (shared) {
+                if (!bindSlice(layerSlices, slice.first, slice.count, pose.layerAlphas.size(), model)) return false;
+            } else {
+                if (slice.first != layerEnd) return false;
+                layerEnd += slice.count;
+                if (layerEnd > pose.layerAlphas.size()) return false;
+            }
+        }
         for (const auto value : instance.instance.transform) if (!Coordinate(value)) return false;
         for (const auto value : instance.instance.color) if (!Unit(value)) return false;
     }
     if (!shared && (groupEnd != pose.groups.size() || alphaEnd != pose.alphas.size())) return false;
+    if (material && ((!shared && layerEnd != pose.layerAlphas.size())
+        || (pose.instances.empty() && !pose.layerAlphas.empty()))) return false;
     for (const auto& group : pose.groups) for (const auto value : group.values) if (!Coordinate(value)) return false;
     for (const auto alpha : pose.alphas) if (!std::isfinite(alpha)) return false;
+    for (const auto alpha : pose.layerAlphas) if (!std::isfinite(alpha)) return false;
     if (scene.initialSkin) {
         const auto& initial = *scene.initialSkin;
         if (pose.sceneVersion != initial.sceneVersion || pose.matrixFormat != initial.matrixFormat || pose.instances.size() != initial.instances.size()
-            || pose.groups.size() != initial.groups.size() || pose.alphas.size() != initial.alphas.size() || pose.colors.size() != initial.colors.size()) return false;
+            || pose.groups.size() != initial.groups.size() || pose.alphas.size() != initial.alphas.size() || pose.colors.size() != initial.colors.size()
+            || pose.dynamicMaterialAlphas != initial.dynamicMaterialAlphas || pose.layerAlphas.size() != initial.layerAlphas.size()
+            || pose.layerSlices.size() != initial.layerSlices.size()) return false;
         for (std::size_t i = 0; i < pose.instances.size(); ++i) {
             const auto& a = pose.instances[i]; const auto& b = initial.instances[i];
             if (a.instance.model != b.instance.model || (!shared && (a.firstGroup != b.firstGroup || a.firstAlpha != b.firstAlpha))) return false;
+            if (material && (pose.layerSlices[i].count != initial.layerSlices[i].count
+                || (!shared && pose.layerSlices[i].first != initial.layerSlices[i].first))) return false;
         }
     }
     return true;
@@ -123,6 +180,9 @@ bool CopySkinnedModelInput(const War3RenderSkinnedModelSceneV2& input, ModelScen
         || input.layerCount > 131072 || input.meshCount > 65536 || input.modelCount > 16384 || input.textureCount > 4096
         || (input.vertexCount && !input.vertices) || (input.indexCount && !input.indices)
         || (input.layerCount && !input.layers) || (input.meshCount && !input.meshes) || (input.modelCount && !input.models)) return false;
+    const War3RenderDynamicColoredSkinUpdateV2* dynamicColored = nullptr;
+    const War3RenderMaterialSkinUpdateV2* material = nullptr;
+    if (!SkinModes(*input.initialPose, dynamicColored, material)) return false;
     // 只有完整的新尾部才读取颜色；未知短尺寸拒绝，不猜布局。
     if (input.structSize != sizeof(input)) {
         if (input.structSize < sizeof(War3RenderColoredSkinnedSceneV2)) return false;
@@ -158,6 +218,7 @@ bool CopySkinnedModelInput(const War3RenderSkinnedModelSceneV2& input, ModelScen
         scene.models.push_back(model.model); scene.modelGroupCounts.push_back(model.groupCount);
     }
     if (meshEnd != input.meshCount) return false;
+    if (!BindModelLayerCounts(scene, material != nullptr)) return false;
     auto pose = std::make_shared<SkinPose>();
     if (!CopySkinUpdate(*input.initialPose, scene, *pose)) return false;
     if (pose->instances.empty() && (input.vertexCount || input.indexCount || input.layerCount || input.meshCount
@@ -181,21 +242,29 @@ bool CopySkinnedModelInput(const War3RenderSkinnedModelSceneV2& input, ModelScen
         + static_cast<std::uint64_t>(input.modelCount) * sizeof(War3RenderSkinnedModelV2)
         + scene.meshColors.size() * sizeof(War3RenderMeshColorV2)
         + pose->instances.size() * (sizeof(War3RenderSkinnedModelInstanceV2) + sizeof(War3RenderModelInstanceV2))
-        + pose->groups.size() * sizeof(War3RenderGroupMatrixV2) + pose->alphas.size() * sizeof(float) + pose->colors.size() * sizeof(War3RenderMeshColorV2);
+        + pose->groups.size() * sizeof(War3RenderGroupMatrixV2) + pose->alphas.size() * sizeof(float) + pose->colors.size() * sizeof(War3RenderMeshColorV2)
+        + pose->layerAlphas.size() * sizeof(float) + pose->layerSlices.size() * sizeof(War3RenderMaterialLayerSliceV2)
+        + scene.modelLayerCounts.size() * sizeof(std::uint32_t);
     scene.initialSkin = std::move(pose);
-    scene.dynamicColors = input.initialPose->structSize == sizeof(War3RenderDynamicColoredSkinUpdateV2);
+    scene.dynamicColors = dynamicColored != nullptr;
     return payloadBytes <= 320ull * 1024 * 1024;
 }
 bool CopySkinRoster(const War3RenderSkinUpdateV2& input, const ModelScene& residentStatic, ModelScene& output) {
+    const War3RenderDynamicColoredSkinUpdateV2* colored = nullptr;
+    const War3RenderMaterialSkinUpdateV2* material = nullptr;
+    if (!SkinModes(input, colored, material)) return false;
     if (!residentStatic.initialSkin || !input.sceneVersion || !input.contentVersion
         || input.sceneVersion <= residentStatic.initialSkin->sceneVersion
         || input.matrixFormat != residentStatic.initialSkin->matrixFormat
-        || (input.structSize == sizeof(War3RenderDynamicColoredSkinUpdateV2)) != (residentStatic.dynamicColors || !residentStatic.initialSkin->colors.empty())) return false;
+        || bool(colored) != (residentStatic.dynamicColors || !residentStatic.initialSkin->colors.empty())
+        || bool(material) != residentStatic.dynamicMaterialAlphas) return false;
     ModelScene candidate;
     candidate.models = residentStatic.models; candidate.modelGroupCounts = residentStatic.modelGroupCounts;
     candidate.meshes = residentStatic.meshes; candidate.layers = residentStatic.layers;
     candidate.meshGroups = residentStatic.meshGroups;
+    candidate.modelLayerCounts = residentStatic.modelLayerCounts;
     candidate.dynamicColors = residentStatic.dynamicColors || !residentStatic.initialSkin->colors.empty();
+    candidate.dynamicMaterialAlphas = residentStatic.dynamicMaterialAlphas;
     // 新槽的初始化沿用首次CopySkinnedModelInput的完整数值/片段校验，绝不修改旧initialSkin。
     auto initial = std::make_shared<SkinPose>();
     if (!CopySkinUpdate(input, candidate, *initial)) return false;
@@ -207,6 +276,9 @@ bool CopySkinRoster(const War3RenderSkinUpdateV2& input, const ModelScene& resid
 }
 bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3RenderSkinUpdateV2& input,
     std::shared_ptr<const ModelScene> residentStatic, ModelScene& output, std::uint64_t& payloadBytes) {
+    const War3RenderDynamicColoredSkinUpdateV2* colored = nullptr;
+    const War3RenderMaterialSkinUpdateV2* material = nullptr;
+    if (!SkinModes(input, colored, material)) return false;
     if (!residentStatic || !residentStatic->initialSkin || assets.structSize != sizeof(assets) || assets.reserved
         || assets.prefix.vertexCount != residentStatic->VertexCount()
         || assets.prefix.indexCount != residentStatic->IndexCount()
@@ -232,7 +304,8 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
         || textures > 4096 || sum(assets.prefix.particleTextureCount, assets.particleTextureCount) > 256
         || input.sceneVersion <= residentStatic->initialSkin->sceneVersion
         || input.matrixFormat != residentStatic->initialSkin->matrixFormat
-        || ((residentStatic->dynamicColors || !residentStatic->initialSkin->colors.empty()) && input.structSize != sizeof(War3RenderDynamicColoredSkinUpdateV2))) return false;
+        || ((residentStatic->dynamicColors || !residentStatic->initialSkin->colors.empty()) && !colored)
+        || (residentStatic->dynamicMaterialAlphas && !material)) return false;
     const auto bytes = vertices * sizeof(War3RenderSkinnedModelVertexV2) + indices * sizeof(std::uint16_t)
         + layers * sizeof(War3RenderModelLayerV2) + meshes * (sizeof(War3RenderSkinnedModelMeshV2) + sizeof(War3RenderMeshColorV2))
         + models * sizeof(War3RenderSkinnedModelV2);
@@ -244,7 +317,7 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
         candidate.staticPrefixes = residentStatic->staticPrefixes;
         candidate.staticPrefixes.push_back(residentStatic->staticSuffix);
     } else candidate.staticBase = residentStatic;
-    candidate.dynamicColors = input.structSize == sizeof(War3RenderDynamicColoredSkinUpdateV2);
+    candidate.dynamicColors = colored != nullptr;
     candidate.prefixVertices = assets.prefix.vertexCount; candidate.prefixIndices = assets.prefix.indexCount;
     candidate.prefixTextures = assets.prefix.modelTextureCount;
     candidate.prefixLayers = assets.prefix.layerCount; candidate.prefixMeshes = assets.prefix.meshCount;
@@ -305,6 +378,7 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
         candidate.models.push_back(value.model); candidate.modelGroupCounts.push_back(value.groupCount);
     }
     if (meshEnd != meshes) return false;
+    if (!BindModelLayerCounts(candidate, material != nullptr)) return false;
     auto pose = std::make_shared<SkinPose>();
     if (!CopySkinUpdate(input, candidate, *pose)) return false;
     candidate.instances.reserve(pose->instances.size());
@@ -312,7 +386,10 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
     candidate.initialSkin = std::move(pose);
     const auto totalBytes = bytes + candidate.initialSkin->instances.size() * sizeof(War3RenderSkinnedModelInstanceV2)
         + candidate.initialSkin->groups.size() * sizeof(War3RenderGroupMatrixV2)
-        + candidate.initialSkin->alphas.size() * sizeof(float) + candidate.initialSkin->colors.size() * sizeof(War3RenderMeshColorV2);
+        + candidate.initialSkin->alphas.size() * sizeof(float) + candidate.initialSkin->colors.size() * sizeof(War3RenderMeshColorV2)
+        + candidate.initialSkin->layerAlphas.size() * sizeof(float)
+        + candidate.initialSkin->layerSlices.size() * sizeof(War3RenderMaterialLayerSliceV2)
+        + candidate.modelLayerCounts.size() * sizeof(std::uint32_t);
     if (totalBytes > 320ull * 1024 * 1024) return false;
     payloadBytes = totalBytes; output = std::move(candidate);
     return true;

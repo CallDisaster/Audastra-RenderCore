@@ -76,6 +76,15 @@ std::array<float,N> Sample(const GeoChannel<N>& channel,const Sequence& sequence
     return value;
 }
 }
+Alpha CompileMaterialScalarAlpha(const War3Map::Render::MdxLayer& source,
+    const std::vector<std::uint32_t>& periods) {
+    return CompileChannel<1>({source.alpha}, source.animatedAlpha, source.alphaInterpolation,
+        source.alphaGlobalSequence, source.alphaKeys, periods);
+}
+float SampleScalarAlpha(const Alpha& channel, const Sequence& sequence, std::uint32_t frame,
+    std::uint64_t global, Evaluation& e) noexcept {
+    return Sample(channel, sequence, frame, global, e)[0];
+}
 Alpha CompileGeosetAlpha(const std::optional<War3Map::Render::MdxGeosetAnimation>& source,const std::vector<std::uint32_t>& periods) {
     Alpha out;out.fallback={1};
     if (!source) return out;
