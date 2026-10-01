@@ -8,10 +8,12 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // 经典 MDX（MDLX v800）的只读模型、公共节点图及 TRS 轨迹。
@@ -219,6 +221,29 @@ struct MdxCollisionShape {
     MdxCollisionSupport support = MdxCollisionSupport::LayoutAmbiguous;
 };
 
+struct MdxModel;
+
+// 缺少矩阵组的无控制器静态模型，仅供显式“预览近似”入口。
+// 偏移指向原始文件；零 MTGC/MATS 不改写成虚构骨骼或源矩阵组。
+struct MdxRigidStaticGeosetOrigin {
+    std::size_t geosetBegin = 0, geosetEnd = 0;
+    std::size_t positionsOffset = 0, normalsOffset = 0, indicesOffset = 0, uvsOffset = 0;
+    std::size_t vertexGroupsCountOffset = 0, matrixGroupsCountOffset = 0, matrixIndicesCountOffset = 0;
+    std::uint32_t vertexCount = 0, indexCount = 0, uvCount = 0;
+};
+
+class MdxRigidStaticPreviewSource {
+public:
+    [[nodiscard]] std::span<const std::byte> Bytes() const noexcept { return bytes_; }
+    [[nodiscard]] std::span<const MdxRigidStaticGeosetOrigin> Geosets() const noexcept { return geosets_; }
+private:
+    MdxRigidStaticPreviewSource(std::span<const std::byte> bytes,
+        std::vector<MdxRigidStaticGeosetOrigin> geosets) : bytes_(bytes.begin(), bytes.end()), geosets_(std::move(geosets)) {}
+    std::vector<std::byte> bytes_;
+    std::vector<MdxRigidStaticGeosetOrigin> geosets_;
+    friend Result<MdxModel> ParseMdxRigidStaticPreview(std::span<const std::byte>, const MdxLimits&);
+};
+
 struct MdxModel {
     std::uint32_t version = 0;
     std::string name;
@@ -238,6 +263,8 @@ struct MdxModel {
     std::string skinningTopologyIssue; // 不完整时显式说明；静态几何仍可读取
     std::size_t skippedChunks = 0; // 按大小跳过的其它块（粒子等）
     std::vector<MdxCollisionShape> collisionShapes; // 只读 CLID 来源，不提供写入/保存能力
+    // 不可伪造构造的解析来源；消费者仍重新检查当前公开几何与原字节一致。
+    std::shared_ptr<const MdxRigidStaticPreviewSource> rigidStaticPreviewSource;
 };
 
 // 仅用于进程内解析数据，不是插件/IPC 布局；跨边界描述符仍用定宽计数。
@@ -268,6 +295,10 @@ struct MdxGeosetAlphaRequest {
 
 // 结构越界、版本不是 800、索引/材质/贴图引用无效时整体失败，不发布部分模型。
 [[nodiscard]] Result<MdxModel> ParseMdx(std::span<const std::byte> bytes, const MdxLimits& limits = {});
+
+// 明确申请无控制器静态预览；不放宽 ParseMdx、不改源文件、不提供保存资格。
+[[nodiscard]] Result<MdxModel> ParseMdxRigidStaticPreview(
+    std::span<const std::byte> bytes, const MdxLimits& limits = {});
 
 // 由对象数据的模型字段得到实际文件：去掉 .mdl/.mdx 后缀；variationCount > 1 时追加变体编号。
 [[nodiscard]] std::string MdxModelFile(std::string_view modelField, std::uint32_t variation, std::uint32_t variationCount);

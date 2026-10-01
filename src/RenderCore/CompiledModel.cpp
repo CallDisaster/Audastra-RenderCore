@@ -4,6 +4,7 @@
 #include "PoseMath.h"
 #include "GeosetChannels.h"
 #include "../Render/Assets/MdxNormalPreview.h"
+#include "../Render/Assets/MdxRigidStaticPreviewInternal.h"
 
 #include <algorithm>
 #include <cmath>
@@ -132,7 +133,7 @@ Track<N> CompileTrack(const std::optional<MdxNodeTrack<N>>& source,
 
 
 std::shared_ptr<const ModelData> Compile(const MdxModel& model,
-    AssetIdentity identity, AssetSource source, std::uint64_t maxBytes) {
+    AssetIdentity identity, AssetSource source, std::uint64_t maxBytes, bool rigidStaticPreview) {
     const MdxLimits hard;
     Require(identity.value != 0 && !source.virtualPath.empty() && !source.sourceLayer.empty()
         && !source.contentDigest.empty() && source.virtualPath.size() <= 4096
@@ -141,12 +142,16 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
     Require(model.version == 800 && model.bones.size() <= hard.maxBones && model.helpers.size() <= hard.maxHelpers
         && MdxNodeCount(model) <= hard.maxNodes && model.pivots.size() <= hard.maxPivots && model.sequences.size() <= hard.maxSequences
         && model.globalSequences.size() <= hard.maxGlobalSequences, Code::PoseModelUnsupported);
-    Require(model.geosets.empty() || model.skinningTopologyComplete, Code::SkinTopologyIncomplete);
+    Require(rigidStaticPreview || model.geosets.empty() || model.skinningTopologyComplete, Code::SkinTopologyIncomplete);
     Require(model.geosets.size() <= hard.maxGeosets, Code::SkinModelUnsupported);
     const auto nodeCount = MdxNodeCount(model);
-    Require(nodeCount != 0, Code::PoseNodeUnavailable);
+    Require(rigidStaticPreview || nodeCount != 0, Code::PoseNodeUnavailable);
     Budget budget{maxBytes};
     budget.Charge(1, sizeof(ModelData));
+    if (rigidStaticPreview) {
+        budget.Charge(model.rigidStaticPreviewSource->Bytes().size(), 1);
+        budget.Charge(model.geosets.size(), sizeof(MdxRigidStaticGeosetOrigin));
+    }
     budget.Charge(source.virtualPath.size() + source.sourceLayer.size() + source.contentDigest.size() + 3, 1);
     budget.Charge(nodeCount, sizeof(CompiledNode) + 7 * sizeof(std::uint32_t) + sizeof(const MdxNode*));
     budget.Charge(model.sequences.size(), sizeof(Sequence));
@@ -168,14 +173,15 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
     for (const auto& g : model.geosets) {
         Require(!g.positions.empty() && g.positions.size() <= hard.maxVerticesPerGeoset
             && g.normals.size() == g.positions.size() && g.vertexGroups.size() == g.positions.size()
-            && !g.matrixGroupSizes.empty() && g.matrixGroupSizes.size() <= hard.maxMatrixGroupsPerGeoset
+            && (rigidStaticPreview || !g.matrixGroupSizes.empty()) && g.matrixGroupSizes.size() <= hard.maxMatrixGroupsPerGeoset
             && g.matrixIndices.size() <= hard.maxMatrixIndicesPerGeoset && g.uninterpretedTailBytes == 0,
             Code::SkinGeometryUnsupported);
-        totalVertices += g.positions.size(); totalGroups += g.matrixGroupSizes.size(); totalMembers += g.matrixIndices.size();
+        const auto groupCount = rigidStaticPreview ? std::size_t{1} : g.matrixGroupSizes.size();
+        totalVertices += g.positions.size(); totalGroups += groupCount; totalMembers += g.matrixIndices.size();
         Require(totalVertices <= hard.maxTotalVertices && totalMembers <= UINT32_MAX && totalGroups <= UINT32_MAX,
             Code::CapacityExceeded);
         budget.Charge(g.positions.size(), 2 * sizeof(Vec3) + sizeof(std::uint32_t));
-        budget.Charge(g.matrixGroupSizes.size(), sizeof(Range32));
+        budget.Charge(groupCount, sizeof(Range32));
         budget.Charge(g.matrixIndices.size(), sizeof(std::uint32_t));
         if (g.animation) {
             // 超限轨迹会在编译的 Alpha.error 中明确拒绝，不复制无界数据。
@@ -185,6 +191,7 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
     }
     auto out = std::make_shared<ModelData>();
     out->identity = identity; out->source = std::move(source);
+    if (rigidStaticPreview) out->rigidStaticPreviewSource = model.rigidStaticPreviewSource;
     out->sequences.reserve(model.sequences.size());
     for (const auto& s : model.sequences) out->sequences.push_back({s.start, s.end, s.flags,
         s.end < s.start || s.flags > 1 ? Code::PoseSequenceUnsupported : Code::Ok});
@@ -244,9 +251,11 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
     out->vertexGroups.reserve(static_cast<std::size_t>(totalVertices));
     out->positions.reserve(static_cast<std::size_t>(totalVertices)); out->normals.reserve(static_cast<std::size_t>(totalVertices));
     for (const auto& g : model.geosets) {
-        const GeosetLayout layout{{static_cast<std::uint32_t>(out->groups.size()), static_cast<std::uint32_t>(g.matrixGroupSizes.size())},
+        const GeosetLayout layout{{static_cast<std::uint32_t>(out->groups.size()),
+            rigidStaticPreview ? 1u : static_cast<std::uint32_t>(g.matrixGroupSizes.size())},
             {static_cast<std::uint32_t>(out->positions.size()), static_cast<std::uint32_t>(g.positions.size())}};
         std::size_t offset = 0;
+        if (rigidStaticPreview) out->groups.push_back({0, 0}); // 明确来源的局部 identity；不虚构骨骼成员。
         for (const auto count : g.matrixGroupSizes) {
             Require(count != 0 && count <= g.matrixIndices.size() - offset, Code::SkinGeometryUnsupported);
             out->groups.push_back({static_cast<std::uint32_t>(out->groupMembers.size()), count});
@@ -259,7 +268,7 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
         }
         Require(offset == g.matrixIndices.size(), Code::SkinGeometryUnsupported);
         for (const auto group : g.vertexGroups) {
-            Require(group < g.matrixGroupSizes.size(), Code::SkinGeometryUnsupported);
+            Require(rigidStaticPreview ? group == 0 : group < g.matrixGroupSizes.size(), Code::SkinGeometryUnsupported);
             out->vertexGroups.push_back(group);
         }
         // 原始顶点/法线是静态输入，加载时查完；变换后溢出或退化仍须逐帧报告。
@@ -297,15 +306,43 @@ std::span<const GeosetColor> CompiledModel::GeosetColors() const noexcept {
     return data_ ? std::span<const GeosetColor>(data_->colors) : std::span<const GeosetColor>{};
 }
 bool CompiledModel::SharesStorageWith(const CompiledModel& other) const noexcept { return data_ == other.data_; }
+bool CompiledModel::IsRigidStaticPreview() const noexcept { return data_ && data_->rigidStaticPreviewSource != nullptr; }
 
 War3Map::Result<CompiledModel> CompileMdxModel(const MdxModel& model, AssetIdentity identity,
     AssetSource source, std::uint64_t maxCompiledBytes) {
+    if (model.rigidStaticPreviewSource) return War3Map::Result<CompiledModel>::Failure("RenderCore.Compile",
+        "MDX_RIGID_STATIC_PREVIEW_EXPLICIT_REQUIRED", "无控制器静态来源必须明确申请预览近似编译，不能作为普通骨骼模型。");
     const auto failure = [](Code code) {
         return War3Map::Result<CompiledModel>::Failure("RenderCore.Compile", CodeName(code), CodeMessage(code));
     };
     try {
-        auto result = War3Map::Result<CompiledModel>::Success(ModelAccess::Make(Compile(model, identity, std::move(source), maxCompiledBytes)));
+        auto result = War3Map::Result<CompiledModel>::Success(ModelAccess::Make(Compile(model, identity, std::move(source), maxCompiledBytes, false)));
         for (std::size_t g = 0; g < model.geosets.size(); ++g) {
+            const auto count = MdxZeroNormalCount(model.geosets[g].normals);
+            if (count != 0) result.diagnostics.push_back(MdxZeroNormalWarning(g, count));
+        }
+        return result;
+    } catch (const CompileFailure& e) { return failure(e.code); }
+    catch (const std::bad_alloc&) { return failure(Code::AllocationFailed); }
+    catch (const std::length_error&) { return failure(Code::AllocationFailed); }
+}
+
+War3Map::Result<CompiledModel> CompileMdxRigidStaticPreview(const MdxModel& model, AssetIdentity identity,
+    AssetSource source, std::uint64_t maxCompiledBytes) {
+    if (!MdxRigidStaticPreviewInternal::Qualified(model))
+        return War3Map::Result<CompiledModel>::Failure("RenderCore.Compile", "MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED",
+            "预览近似需要密封的无控制器静态来源；当前几何、槽号、矩阵或节点资格与来源不一致。");
+    const auto failure = [](Code code) {
+        return War3Map::Result<CompiledModel>::Failure("RenderCore.Compile", CodeName(code), CodeMessage(code));
+    };
+    try {
+        auto result = War3Map::Result<CompiledModel>::Success(ModelAccess::Make(
+            Compile(model, identity, std::move(source), maxCompiledBytes, true)));
+        const auto origins = model.rigidStaticPreviewSource->Geosets();
+        for (std::size_t g = 0; g < model.geosets.size(); ++g) {
+            auto warning = MdxRigidStaticPreviewInternal::Warning(origins[g], g);
+            warning.origin->source = result.value->Source().virtualPath;
+            result.diagnostics.push_back(std::move(warning));
             const auto count = MdxZeroNormalCount(model.geosets[g].normals);
             if (count != 0) result.diagnostics.push_back(MdxZeroNormalWarning(g, count));
         }

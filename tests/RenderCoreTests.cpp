@@ -4,6 +4,7 @@
 #include "War3RenderCore/PoseBatch.h"
 #include "War3MapCore/Render/MdxPose.h"
 #include "MdxTestModel.h"
+#include "RigidStaticPreviewFixture.h"
 #include "RenderCoreAllocProbe.h"
 
 #include <algorithm>
@@ -369,12 +370,60 @@ void External() {
     Require(SkinPreviewGeoset(asset, 0, external, {}, n) == Code::OutputRangeInvalid, "输出容量拒绝错误");
     std::cout << "external mixed_sources=1 layout_count_space_rejections=1 override_rejected=1 recovery=1\n";
 }
+
+void RigidStaticPreview() {
+    const auto bytes = MdxTest::BuildRigidStaticPreviewMdx();
+    const auto parsed = ParseMdxRigidStaticPreview(bytes); Require(parsed.Succeeded(), "静态预览解析失败");
+    Require(!CompileMdxModel(*parsed.value, {11, 1}, Source()).Succeeded(), "普通编译仍拒绝静态来源");
+    auto compiled = CompileMdxRigidStaticPreview(*parsed.value, {11, 1}, Source());
+    Require(compiled.Succeeded() && compiled.value->IsRigidStaticPreview() && compiled.value->NodeCount() == 0
+        && compiled.value->GroupCount() == 2, "静态身份/组号失败");
+    auto evaluator = Prepare(*compiled.value); auto first = Request(1); first.sequenceIndex = 0;
+    auto second = first; second.instance.value = 2; second.sequenceElapsedMs = 800;
+    const std::array requests{first, second}; Require(evaluator.Evaluate(requests).failedInstances == 0, "静态双实例求值失败");
+    Require(evaluator.Receipts()[0].sequenceFrame == 260 && evaluator.Receipts()[1].sequenceFrame == 810,
+        "静态实例时间不能串用");
+    const auto groupData = compiled.value->VertexGroups().data();
+    const GroupMatrix identity{{1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0}};
+    for (std::uint32_t instance = 0; instance < requests.size(); ++instance) {
+        Require(evaluator.Nodes(instance).empty() && evaluator.Receipts()[instance].quality == PoseQuality::PreviewApproximate,
+            "静态预览质量或虚构节点");
+        for (const auto& matrix : evaluator.Groups(instance)) Require(Bits(matrix, identity), "局部组不是 identity");
+        for (std::uint32_t g = 0; g < 2; ++g) {
+            const auto reference = SampleMdxRigidStaticPreviewGeoset(*parsed.value,
+                {g, 0, requests[instance].sequenceElapsedMs, 0, std::nullopt});
+            Require(reference.Succeeded() && reference.value->sequenceFrame == evaluator.Receipts()[instance].sequenceFrame,
+                "静态独立时钟/参考失败");
+            std::vector<Vec3> positions(3), normals(3);
+            Require(SkinPreviewGeoset(*compiled.value, g, evaluator.Groups(instance), positions, normals) == Code::Ok,
+                "静态蒙皮失败");
+            for (std::size_t v = 0; v < 3; ++v)
+                Require(Bits(positions[v], reference.value->positions[v]) && Bits(normals[v], reference.value->normals[v]),
+                    "静态 identity 参考逐位不符");
+        }
+    }
+    const auto stable = evaluator.Groups(0)[0]; RenderCoreAllocProbe::Begin();
+    const auto outcome = evaluator.Evaluate(requests); const auto allocations = RenderCoreAllocProbe::End();
+    Require(outcome.failedInstances == 0 && allocations == 0 && Bits(stable, evaluator.Groups(0)[0])
+        && compiled.value->VertexGroups().data() == groupData, "静态重复求值/资源/分配不变量");
+    auto changed = *parsed.value; changed.geosets[0].vertexGroups[0] = 1;
+    Require(!CompileMdxRigidStaticPreview(changed, {11, 1}, Source()).Succeeded(), "当前非零槽号未拒绝");
+    changed = *parsed.value; changed.helpers.push_back({});
+    Require(!CompileMdxRigidStaticPreview(changed, {11, 1}, Source()).Succeeded(), "添加控制器未拒绝");
+    changed = *parsed.value; changed.geosets[0].matrixGroupSizes.push_back(1);
+    Require(!CompileMdxRigidStaticPreview(changed, {11, 1}, Source()).Succeeded(), "添加非原始矩阵组未拒绝");
+    changed = *parsed.value; changed.rigidStaticPreviewSource.reset();
+    Require(!CompileMdxRigidStaticPreview(changed, {11, 1}, Source()).Succeeded(), "缺解析来源未拒绝");
+    std::cout << "rigid_static_preview strict_rejected=1 identity_groups=2 oracle_bit_mismatch=0 independent_clocks=1 new_calls="
+        << allocations << '\n';
+}
 }
 int main(int argc, char** argv) {
     try {
         Require(argc == 2, "用法：war3-render-core-tests oracle|instances|external");
         const std::string group = argv[1];
-        if (group == "oracle") Oracle(); else if (group == "instances") Instances(); else if (group == "external") External();
+        if (group == "oracle") { Oracle(); RigidStaticPreview(); }
+        else if (group == "instances") Instances(); else if (group == "external") External();
         else throw std::runtime_error("未知测试分组");
         std::cout << "PASS " << group << '\n'; return 0;
     } catch (const std::exception& e) { std::cerr << "FAIL " << e.what() << '\n'; return 1; }

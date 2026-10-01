@@ -2,6 +2,7 @@
 // Copyright (C) 2026 CallDisaster
 
 #include "War3MapCore/Render/MdxPose.h"
+#include "MdxRigidStaticPreviewInternal.h"
 #include "MdxNormalPreview.h"
 
 #include <algorithm>
@@ -575,6 +576,37 @@ MdxRigidSkinnedGeoset SkinRigidGeoset(const MdxModel& model, const MdxRigidSkinR
     return result;
 }
 
+MdxRigidSkinnedGeoset StaticPreviewGeoset(const MdxModel& model, const MdxRigidSkinRequest& request,
+    std::vector<Diagnostic>& warnings) {
+    if (!MdxRigidStaticPreviewInternal::Qualified(model))
+        Fail("MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED", "预览近似的当前几何、矩阵、节点或原字节来源资格不一致。");
+    if (request.geosetIndex >= model.geosets.size())
+        Fail("MDX_SKIN_GEOSET_INVALID", "请求的 geoset 序号不存在。");
+    if (request.sequenceIndex >= model.sequences.size())
+        Fail("MDX_POSE_SEQUENCE_INVALID", "请求的动作序号不存在。");
+    if (request.camera) CheckCamera(*request.camera);
+    const auto& sequence = model.sequences[request.sequenceIndex];
+    if (sequence.end < sequence.start || sequence.flags > 1)
+        Fail("MDX_POSE_SEQUENCE_UNSUPPORTED", "动作区间或循环标志尚不支持。");
+    const auto duration = static_cast<std::uint64_t>(sequence.end) - sequence.start;
+    const auto elapsed = sequence.flags == 0 && duration != 0
+        ? request.sequenceElapsedMs % duration : std::min(request.sequenceElapsedMs, duration);
+    MdxRigidSkinnedGeoset result;
+    result.sequenceFrame = static_cast<std::uint32_t>(sequence.start + elapsed);
+    const auto& g = model.geosets[request.geosetIndex];
+    warnings.push_back(MdxRigidStaticPreviewInternal::Warning(
+        model.rigidStaticPreviewSource->Geosets()[request.geosetIndex], request.geosetIndex));
+    const auto zeroNormals = MdxZeroNormalCount(g.normals);
+    if (zeroNormals != 0) warnings.push_back(MdxZeroNormalWarning(request.geosetIndex, zeroNormals));
+    result.positions.reserve(g.positions.size()); result.normals.reserve(g.normals.size());
+    const auto localIdentity = Identity();
+    for (std::size_t i = 0; i < g.positions.size(); ++i) {
+        result.positions.push_back(TransformPosition(localIdentity, g.positions[i]));
+        result.normals.push_back(TransformNormal(localIdentity, g.normals[i]));
+    }
+    return result;
+}
+
 } // namespace
 
 Result<MdxPoseSample> SampleMdxNodePose(const MdxModel& model, const MdxPoseRequest& request) {
@@ -594,6 +626,8 @@ Result<MdxPoseSample> SampleMdxNodePose(const MdxModel& model, const MdxPoseRequ
 
 Result<MdxRigidSkinnedGeoset> SampleMdxRigidSkinnedGeoset(
     const MdxModel& model, const MdxRigidSkinRequest& request) {
+    if (model.rigidStaticPreviewSource) return Result<MdxRigidSkinnedGeoset>::Failure("Mdx.Skin",
+        "MDX_RIGID_STATIC_PREVIEW_EXPLICIT_REQUIRED", "无控制器来源必须明确申请预览近似采样，不能作为普通骨骼模型。");
     try {
         std::vector<Diagnostic> warnings;
         auto result = Result<MdxRigidSkinnedGeoset>::Success(SkinRigidGeoset(model, request, warnings));
@@ -605,6 +639,22 @@ Result<MdxRigidSkinnedGeoset> SampleMdxRigidSkinnedGeoset(
         return Result<MdxRigidSkinnedGeoset>::Failure("Mdx.Skin", "MDX_SKIN_ALLOCATION", "顶点姿态结果分配失败。");
     } catch (const std::length_error&) {
         return Result<MdxRigidSkinnedGeoset>::Failure("Mdx.Skin", "MDX_SKIN_ALLOCATION", "顶点姿态超过容器容量。");
+    }
+}
+
+Result<MdxRigidSkinnedGeoset> SampleMdxRigidStaticPreviewGeoset(
+    const MdxModel& model, const MdxRigidSkinRequest& request) {
+    try {
+        std::vector<Diagnostic> warnings;
+        auto result = Result<MdxRigidSkinnedGeoset>::Success(StaticPreviewGeoset(model, request, warnings));
+        result.diagnostics = std::move(warnings);
+        return result;
+    } catch (const PoseError& error) {
+        return Result<MdxRigidSkinnedGeoset>::Failure("Mdx.Skin", error.code, error.what());
+    } catch (const std::bad_alloc&) {
+        return Result<MdxRigidSkinnedGeoset>::Failure("Mdx.Skin", "MDX_SKIN_ALLOCATION", "静态预览采样分配失败。");
+    } catch (const std::length_error&) {
+        return Result<MdxRigidSkinnedGeoset>::Failure("Mdx.Skin", "MDX_SKIN_ALLOCATION", "静态预览采样超出容器容量。");
     }
 }
 

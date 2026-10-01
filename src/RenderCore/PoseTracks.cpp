@@ -133,6 +133,10 @@ bool EvaluateComputed(const ModelData& model, const PoseRequest& request, std::u
     }
     for (std::size_t i = 0; i < model.groups.size(); ++i) {
         const auto members = model.groups[i];
+        if (model.rigidStaticPreviewSource && members.count == 0) {
+            groups[i].values = {1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0};
+            continue;
+        }
         std::array<double, 12> sum{};
         for (std::uint32_t j = 0; j < members.count; ++j) {
             const auto& matrix = nodes[model.groupMembers[members.offset + j]].worldMatrix;

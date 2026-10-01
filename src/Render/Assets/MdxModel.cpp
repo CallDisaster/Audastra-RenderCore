@@ -3,6 +3,7 @@
 
 #include "War3MapCore/Render/MdxModel.h"
 #include "MdxNodeRead.h"
+#include "MdxRigidStaticPreviewInternal.h"
 
 #include <algorithm>
 #include <bit>
@@ -135,16 +136,20 @@ void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits) {
     }
 }
 
-void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::size_t& totalVertices, std::size_t& totalIndices) {
+void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::size_t& totalVertices,
+    std::size_t& totalIndices, std::vector<MdxRigidStaticGeosetOrigin>* rigidOrigins) {
     while (reader.Remaining() != 0) {
         const auto start = reader.Position();
         const auto bytes = reader.U32("geoset 大小");
         if (bytes < 4 || bytes > reader.Remaining() + 4) Fail("MDX_SIZE_INVALID", "geoset 大小无效。");
         if (model.geosets.size() >= limits.maxGeosets) Fail("MDX_LIMIT", "geoset 数量超过上限。");
         const auto end = start + bytes;
+        MdxRigidStaticGeosetOrigin origin;
+        origin.geosetBegin = start; origin.geosetEnd = end;
         MdxGeoset geoset;
         reader.ExpectTag("VRTX", "顶点");
         const auto vertexCount = reader.Count(12, limits.maxVerticesPerGeoset, "顶点");
+        origin.vertexCount = vertexCount; origin.positionsOffset = reader.Position();
         totalVertices += vertexCount;
         if (totalVertices > limits.maxTotalVertices) Fail("MDX_LIMIT", "模型顶点总数超过上限。");
         geoset.positions.resize(vertexCount);
@@ -152,6 +157,7 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
             for (auto& axis : position) axis = reader.F32("顶点坐标");
         reader.ExpectTag("NRMS", "法线");
         const auto normalCount = reader.Count(12, limits.maxVerticesPerGeoset, "法线");
+        origin.normalsOffset = reader.Position();
         if (normalCount != vertexCount) Fail("MDX_VALUE_INVALID", "法线数量与顶点数量不一致。");
         geoset.normals.resize(normalCount);
         for (auto& normal : geoset.normals)
@@ -166,6 +172,7 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
         for (auto& count : counts) count = reader.U32("图元计数");
         reader.ExpectTag("PVTX", "图元索引");
         const auto indexCount = reader.Count(2, limits.maxTotalIndices, "图元索引");
+        origin.indexCount = indexCount; origin.indicesOffset = reader.Position();
         std::uint64_t declared = 0;
         for (const auto count : counts) declared += count;
         if (declared != indexCount) Fail("MDX_VALUE_INVALID", "图元计数之和与索引数量不一致。");
@@ -181,14 +188,20 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
         totalIndices += geoset.indices.size();
         if (totalIndices > limits.maxTotalIndices) Fail("MDX_LIMIT", "模型索引总数超过上限。");
         reader.ExpectTag("GNDX", "顶点组");
+        origin.vertexGroupsCountOffset = reader.Position();
         const auto vertexGroupCount = reader.Count(1, limits.maxVerticesPerGeoset, "顶点组");
         if (vertexGroupCount != vertexCount) Fail("MDX_VALUE_INVALID", "GNDX 槽号数量与顶点数量不一致。");
         geoset.vertexGroups.reserve(vertexGroupCount);
         for (std::uint32_t i = 0; i < vertexGroupCount; ++i)
             geoset.vertexGroups.push_back(reader.U8("顶点组槽号"));
         reader.ExpectTag("MTGC", "矩阵组");
+        origin.matrixGroupsCountOffset = reader.Position();
         const auto matrixGroupCount = reader.Count(4, limits.maxMatrixGroupsPerGeoset, "矩阵组");
-        if (vertexCount != 0 && matrixGroupCount == 0) Fail("MDX_VALUE_INVALID", "有顶点的 geoset 缺少矩阵组。");
+        if (!rigidOrigins && vertexCount != 0 && matrixGroupCount == 0)
+            Fail("MDX_VALUE_INVALID", "有顶点的 geoset 缺少矩阵组。");
+        if (rigidOrigins && (vertexCount == 0 || matrixGroupCount != 0))
+            Fail("MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED", "预览近似只接纳有顶点且原 MTGC count=0 的静态 geoset，offset="
+                + std::to_string(origin.matrixGroupsCountOffset) + " count=" + std::to_string(matrixGroupCount) + "。");
         std::uint64_t matrixCount = 0;
         geoset.matrixGroupSizes.reserve(matrixGroupCount);
         for (std::uint32_t i = 0; i < matrixGroupCount; ++i) {
@@ -198,10 +211,19 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
             if (matrixCount > limits.maxMatrixIndicesPerGeoset) Fail("MDX_LIMIT", "矩阵索引数量超过上限。");
             geoset.matrixGroupSizes.push_back(count);
         }
-        for (const auto slot : geoset.vertexGroups)
-            if (slot >= matrixGroupCount) Fail("MDX_REFERENCE_INVALID", "GNDX 槽号超出 MTGC 组数。");
+        for (const auto slot : geoset.vertexGroups) {
+            if (!rigidOrigins && slot >= matrixGroupCount)
+                Fail("MDX_REFERENCE_INVALID", "GNDX 槽号超出 MTGC 组数。");
+            if (rigidOrigins && slot != 0)
+                Fail("MDX_REFERENCE_INVALID", "GNDX 槽号不符合静态矩阵组资格，offset="
+                    + std::to_string(origin.vertexGroupsCountOffset) + " slot=" + std::to_string(slot) + "。");
+        }
         reader.ExpectTag("MATS", "矩阵索引");
+        origin.matrixIndicesCountOffset = reader.Position();
         const auto matrixIndexCount = reader.Count(4, limits.maxMatrixIndicesPerGeoset, "矩阵索引");
+        if (rigidOrigins && matrixIndexCount != 0)
+            Fail("MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED", "预览近似要求原 MATS count=0，offset="
+                + std::to_string(origin.matrixIndicesCountOffset) + " count=" + std::to_string(matrixIndexCount) + "。");
         if (matrixCount != matrixIndexCount) Fail("MDX_VALUE_INVALID", "MTGC 大小之和与 MATS 索引数不一致。");
         geoset.matrixIndices.reserve(matrixIndexCount);
         for (std::uint32_t i = 0; i < matrixIndexCount; ++i)
@@ -218,6 +240,7 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
             const auto uvCount = reader.Count(8, limits.maxVerticesPerGeoset, "UV");
             if (uvCount != vertexCount) Fail("MDX_VALUE_INVALID", "UV 数量与顶点数量不一致。");
             if (set == 0) {
+                origin.uvCount = uvCount; origin.uvsOffset = reader.Position();
                 geoset.uvs.resize(uvCount);
                 for (auto& uv : geoset.uvs) { uv[0] = reader.F32("UV"); uv[1] = reader.F32("UV"); }
             } else {
@@ -227,8 +250,12 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
         if (geoset.uvs.empty()) geoset.uvs.assign(vertexCount, {0.0f, 0.0f});
         if (reader.Position() > end) Fail("MDX_SIZE_INVALID", "geoset 内容越过其边界。");
         geoset.uninterpretedTailBytes = end - reader.Position();
+        if (rigidOrigins && (geoset.uninterpretedTailBytes != 0 || geoset.skippedPrimitiveGroups != 0))
+            Fail("MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED", "预览近似不接纳未知 GEOS 尾部或未解释图元，geoset offset="
+                + std::to_string(start) + "。");
         reader.Skip(end - reader.Position(), "geoset 其余字段");
         model.geosets.push_back(std::move(geoset));
+        if (rigidOrigins) rigidOrigins->push_back(origin);
     }
 }
 
@@ -338,7 +365,8 @@ void ParseLights(Reader reader, MdxModel& model, const MdxLimits& limits, std::s
 
 } // namespace
 
-Result<MdxModel> ParseMdx(std::span<const std::byte> bytes, const MdxLimits& limits) {
+static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, const MdxLimits& limits,
+    std::vector<MdxRigidStaticGeosetOrigin>* rigidOrigins) {
     try {
         constexpr MdxLimits hard{};
         if (limits.maxInputBytes > hard.maxInputBytes || limits.maxGeosets > hard.maxGeosets
@@ -363,6 +391,9 @@ Result<MdxModel> ParseMdx(std::span<const std::byte> bytes, const MdxLimits& lim
             const auto tag = file.Tag("块标记");
             const auto size = file.U32("块大小");
             file.Need(size, "块内容");
+            if (rigidOrigins && !MdxRigidStaticPreviewInternal::AllowedChunk(tag))
+                Fail("MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED", "预览近似不接纳控制器或未识别块 " + tag
+                    + "，offset=" + std::to_string(file.Position() - 8) + "。");
             const Reader chunk(bytes, file.Position(), file.Position() + size);
             if (tag == "VERS") {
                 auto version = chunk;
@@ -386,7 +417,7 @@ Result<MdxModel> ParseMdx(std::span<const std::byte> bytes, const MdxLimits& lim
                 ParseMaterials(chunk, model, limits);
             } else if (tag == "GEOS") {
                 if (model.version != kClassicVersion) Fail("MDX_VERSION_UNSUPPORTED", "GEOS 之前缺少版本 800 的 VERS 块。");
-                ParseGeosets(chunk, model, limits, totalVertices, totalIndices);
+                ParseGeosets(chunk, model, limits, totalVertices, totalIndices, rigidOrigins);
             } else if (tag == "GEOA") {
                 auto parsed = ParseGeosetAnimations(chunk, limits);
                 if (parsed.size() > limits.maxGeosets - animations.size())
@@ -497,6 +528,33 @@ Result<MdxModel> ParseMdx(std::span<const std::byte> bytes, const MdxLimits& lim
         return Result<MdxModel>::Failure(kSubsystem, "MDX_ALLOCATION", "MDX 读取分配失败。");
     } catch (const std::length_error&) {
         return Result<MdxModel>::Failure(kSubsystem, "MDX_ALLOCATION", "MDX 读取超出容器容量。");
+    }
+}
+
+Result<MdxModel> ParseMdx(std::span<const std::byte> bytes, const MdxLimits& limits) {
+    return ParseMdxWithPolicy(bytes, limits, nullptr);
+}
+
+Result<MdxModel> ParseMdxRigidStaticPreview(std::span<const std::byte> bytes, const MdxLimits& limits) {
+    try {
+        std::vector<MdxRigidStaticGeosetOrigin> origins;
+        auto result = ParseMdxWithPolicy(bytes, limits, &origins);
+        if (!result.Succeeded()) return result;
+        result.value->rigidStaticPreviewSource = std::shared_ptr<const MdxRigidStaticPreviewSource>(
+            new MdxRigidStaticPreviewSource(bytes, std::move(origins)));
+        // identity 是专用预览产物，不假称原文件骨骼拓扑已闭合。
+        result.value->skinningTopologyComplete = false;
+        result.value->skinningTopologyIssue = "无控制器静态模型只提供显式预览近似 identity 组。";
+        if (!MdxRigidStaticPreviewInternal::Qualified(*result.value))
+            return Result<MdxModel>::Failure(kSubsystem, "MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED", "静态预览来源或几何资格不完整。");
+        const auto provenance = result.value->rigidStaticPreviewSource->Geosets();
+        for (std::size_t i = 0; i < provenance.size(); ++i)
+            result.diagnostics.push_back(MdxRigidStaticPreviewInternal::Warning(provenance[i], i));
+        return result;
+    } catch (const std::bad_alloc&) {
+        return Result<MdxModel>::Failure(kSubsystem, "MDX_ALLOCATION", "静态预览来源分配失败。");
+    } catch (const std::length_error&) {
+        return Result<MdxModel>::Failure(kSubsystem, "MDX_ALLOCATION", "静态预览来源超出容器容量。");
     }
 }
 

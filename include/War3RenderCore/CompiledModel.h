@@ -32,6 +32,7 @@ public:
     // GEOA 静态属性按原 geoset 顺序；动态 KGAC 必须读取求值器 Colors，不能用它冒充当前帧。
     [[nodiscard]] std::span<const GeosetColor> GeosetColors() const noexcept;
     [[nodiscard]] bool SharesStorageWith(const CompiledModel& other) const noexcept;
+    [[nodiscard]] bool IsRigidStaticPreview() const noexcept;
 private:
     std::shared_ptr<const Detail::ModelData> data_;
     friend struct Detail::ModelAccess;
@@ -40,6 +41,12 @@ private:
 // 静态结构错误在加载时拒绝。序列/轨迹/透明度的条件性不支持状态预先编译成诊断，
 // 求值时只读取该状态，不重建节点表或重复遍历按键校验；没有静默修正输入。
 [[nodiscard]] War3Map::Result<CompiledModel> CompileMdxModel(
+    const War3Map::Render::MdxModel& model, AssetIdentity identity, AssetSource source,
+    std::uint64_t maxCompiledBytes = 128ull * 1024 * 1024);
+
+// 仅消费 ParseMdxRigidStaticPreview 的密封来源并重新核对几何。
+// 每 geoset 输出一个模型局部 identity 组；不存在虚构节点，仍为 PreviewApproximate。
+[[nodiscard]] War3Map::Result<CompiledModel> CompileMdxRigidStaticPreview(
     const War3Map::Render::MdxModel& model, AssetIdentity identity, AssetSource source,
     std::uint64_t maxCompiledBytes = 128ull * 1024 * 1024);
 

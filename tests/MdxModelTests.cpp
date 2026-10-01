@@ -3,11 +3,17 @@
 
 #include "War3MapCore/Render/MdxModel.h"
 #include "War3MapCore/Render/MdxPose.h"
+#include "War3RenderCore/PoseBatch.h"
 #include "MdxTestModel.h"
+#include "RigidStaticPreviewFixture.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -526,9 +532,125 @@ void TestModelFile() {
     Require(MdxModelFile("Doodads\\Cage\\Cage.MDX", 5, 1) == "Doodads\\Cage\\Cage.mdx", "大写后缀");
 }
 
+void TestRigidStaticPreview() {
+    const auto bytes = MdxTest::BuildRigidStaticPreviewMdx();
+    const auto strict = ParseMdx(bytes);
+    Require(!strict.Succeeded() && strict.diagnostics.front().code == "MDX_VALUE_INVALID", "普通解析必须继续拒绝空矩阵组");
+    const auto preview = ParseMdxRigidStaticPreview(bytes);
+    Require(preview.Succeeded() && !preview.value->skinningTopologyComplete && MdxNodeCount(*preview.value) == 0,
+        "静态预览不能虚构闭合骨架");
+    const auto source = preview.value->rigidStaticPreviewSource;
+    Require(source && std::equal(bytes.begin(), bytes.end(), source->Bytes().begin(), source->Bytes().end()), "保留全部源字节");
+    Require(preview.value->geosets[0].matrixGroupSizes.empty() && preview.value->geosets[0].matrixIndices.empty()
+        && preview.diagnostics.size() == 2 && preview.diagnostics[0].origin.has_value()
+        && preview.diagnostics[0].message.find("预览近似") != std::string::npos, "静态来源与偏移警告");
+    Require(!SampleMdxRigidSkinnedGeoset(*preview.value, {}).Succeeded(), "普通参考不能暗中接纳静态来源");
+    const auto origins = source->Geosets();
+    auto damaged = bytes; damaged[origins[0].vertexGroupsCountOffset + 4] = std::byte{1};
+    Require(!ParseMdxRigidStaticPreview(damaged).Succeeded(), "非零 GNDX 拒绝");
+    for (const auto offset : {origins[0].vertexGroupsCountOffset, origins[0].matrixGroupsCountOffset,
+        origins[0].matrixIndicesCountOffset}) {
+        damaged = bytes; const std::uint32_t count = 1; std::memcpy(damaged.data() + offset, &count, 4);
+        Require(!ParseMdxRigidStaticPreview(damaged).Succeeded(), "损坏计数拒绝");
+    }
+    for (const auto* tag : {"BONE", "HELP", "PIVT", "CAMS", "ATCH", "PREM", "PRE2", "RIBB", "LITE", "ZZZZ"}) {
+        MdxTest::Writer w; w.bytes = bytes; w.Tag(tag); w.U32(0);
+        const auto rejected = ParseMdxRigidStaticPreview(w.bytes);
+        Require(!rejected.Succeeded() && rejected.diagnostics.front().code == "MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED",
+            "所有控制器与未知块均排除");
+    }
+    damaged = bytes; damaged.pop_back(); Require(!ParseMdxRigidStaticPreview(damaged).Succeeded(), "截断来源拒绝");
+    auto changed = *preview.value; changed.geosets[0].positions[0][0] += 1;
+    Require(!SampleMdxRigidStaticPreviewGeoset(changed, {}).Succeeded(), "公开几何变更必须重新拒绝资格");
+}
+
+// 手动实物核对复用既有测试入口；仅读取提取后的本地 MDX，不读取或写回地图。
+void TestRigidStaticAsset(const std::string& filename) {
+    using namespace War3RenderCore;
+    const std::filesystem::path path(std::u8string(filename.begin(), filename.end()));
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    Require(input.is_open(), "实际 MDX 文件无法只读打开");
+    const auto length = input.tellg();
+    Require(length >= 0 && static_cast<std::uint64_t>(length) <= MdxLimits{}.maxInputBytes,
+        "实际 MDX 文件超过默认输入预算或长度不可用");
+    std::vector<std::byte> bytes(static_cast<std::size_t>(length));
+    input.seekg(0);
+    if (!bytes.empty()) input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    Require(input.good(), "实际 MDX 文件未能完整读取");
+    const auto strict = ParseMdx(bytes);
+    Require(!strict.Succeeded() && !strict.value && !strict.diagnostics.empty()
+        && strict.diagnostics.front().code == "MDX_VALUE_INVALID", "实际资产的严格首要拒绝必须仍为 MDX_VALUE_INVALID");
+    const auto parsed = ParseMdxRigidStaticPreview(bytes);
+    if (!parsed.Succeeded()) throw std::runtime_error("实际静态预览解析拒绝：" + parsed.diagnostics.front().code);
+    const auto& model = *parsed.value;
+    const auto source = model.rigidStaticPreviewSource;
+    Require(source && std::equal(bytes.begin(), bytes.end(), source->Bytes().begin(), source->Bytes().end()),
+        "实际资产密封来源必须逐字节保留");
+    // 测试身份中的校验值显式标识 FNV64，不冒充地图或文件的 SHA。
+    std::uint64_t fingerprint = 14695981039346656037ull;
+    for (const auto value : bytes) { fingerprint ^= std::to_integer<std::uint8_t>(value); fingerprint *= 1099511628211ull; }
+    auto compiled = CompileMdxRigidStaticPreview(model, {1, 1},
+        {filename, "local-readonly-test", "fnv64:" + std::to_string(fingerprint)});
+    if (!compiled.Succeeded()) throw std::runtime_error("实际静态预览编译拒绝：" + compiled.diagnostics.front().code);
+    const auto& asset = *compiled.value;
+    Require(asset.NodeCount() == 0 && asset.IsRigidStaticPreview(), "实际静态预览不能虚构节点");
+    const std::array assets{asset};
+    auto prepared = PoseBatchEvaluator::Create(assets, 1);
+    Require(prepared.Succeeded(), "实际静态预览求值器创建失败");
+    auto evaluator = std::move(*prepared.value);
+    PoseRequest first; first.instance = {1, 1}; first.asset = asset.Identity();
+    auto second = first; second.instance = {2, 1}; second.sequenceElapsedMs = 200; second.globalElapsedMs = 1000;
+    const std::array requests{first, second};
+    const auto evaluated = evaluator.Evaluate(requests);
+    Require(evaluated.error == Code::Ok && evaluated.failedInstances == 0 && evaluator.Receipts().size() == 2,
+        "实际静态预览双实例批次失败");
+    std::uint64_t vertices = 0, checks = 0, differences = 0;
+    for (std::uint32_t g = 0; g < asset.GeosetCount(); ++g) {
+        vertices += model.geosets[g].positions.size();
+        std::uint64_t geosetDiff = 0;
+        for (std::uint32_t instance = 0; instance < requests.size(); ++instance) {
+            const auto& request = requests[instance];
+            const auto& receipt = evaluator.Receipts()[instance];
+            Require(receipt.instance == request.instance && receipt.error == Code::Ok
+                && receipt.quality == PoseQuality::PreviewApproximate && evaluator.Nodes(instance).empty(),
+                "实际预览身份、质量或节点回执不符");
+            const auto reference = SampleMdxRigidStaticPreviewGeoset(model,
+                {g, request.sequenceIndex, request.sequenceElapsedMs, request.globalElapsedMs, std::nullopt});
+            Require(reference.Succeeded() && reference.value->sequenceFrame == receipt.sequenceFrame,
+                "实际预览各实例时钟与独立参考不符");
+            std::vector<Vec3> positions(model.geosets[g].positions.size()), normals(positions.size());
+            Require(SkinPreviewGeoset(asset, g, evaluator.Groups(instance), positions, normals) == Code::Ok,
+                "实际预览蒙皮失败");
+            Require(reference.value->positions.size() == positions.size() && reference.value->normals.size() == normals.size(),
+                "实际预览参考顶点数量不符");
+            for (std::size_t v = 0; v < positions.size(); ++v) {
+                for (std::size_t component = 0; component < 3; ++component) {
+                    geosetDiff += std::bit_cast<std::uint32_t>(positions[v][component])
+                        != std::bit_cast<std::uint32_t>(reference.value->positions[v][component]);
+                    geosetDiff += std::bit_cast<std::uint32_t>(normals[v][component])
+                        != std::bit_cast<std::uint32_t>(reference.value->normals[v][component]);
+                    checks += 2;
+                }
+            }
+        }
+        differences += geosetDiff;
+        std::cout << "rigid_static_geoset file=" << std::quoted(filename) << " index=" << g
+            << " vertices=" << model.geosets[g].positions.size() << " groups=" << asset.Geosets()[g].groups.count
+            << " diff=" << geosetDiff << '\n';
+    }
+    Require(std::equal(bytes.begin(), bytes.end(), source->Bytes().begin(), source->Bytes().end()), "实物求值不能改密封源字节");
+    // 独立参考在每个 geoset 核对全部公开几何与密封来源；皮肤输出只写独立向量。
+    std::cout << "rigid_static_asset file=" << std::quoted(filename) << " bytes=" << bytes.size()
+        << " nodes=" << asset.NodeCount() << " groups=" << asset.GroupCount() << " geosets=" << asset.GeosetCount()
+        << " vertices=" << vertices << " instances=2 elapsed_ms=0,200 frames=" << evaluator.Receipts()[0].sequenceFrame
+        << ',' << evaluator.Receipts()[1].sequenceFrame << " float_checks=" << checks << " diff=" << differences
+        << " strict=MDX_VALUE_INVALID quality=PreviewApproximate geometry_unchanged=1 source_bytes_unchanged=1\n";
+    Require(differences == 0, "实际预览蒙皮 float bits 对照失败");
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
         TestParse();
         TestRejections();
@@ -542,6 +664,8 @@ int main() {
         TestRigidSkinningPivotAndNormals();
         TestCollisionMetadata();
         TestModelFile();
+        TestRigidStaticPreview();
+        for (int i = 1; i < argc; ++i) TestRigidStaticAsset(argv[i]);
         std::cout << "MdxModelTests: all tests passed\n";
         return 0;
     } catch (const std::exception& exception) {

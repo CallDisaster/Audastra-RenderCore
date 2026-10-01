@@ -71,4 +71,8 @@ struct MdxRigidSkinnedGeoset {
 [[nodiscard]] Result<MdxRigidSkinnedGeoset> SampleMdxRigidSkinnedGeoset(
     const MdxModel& model, const MdxRigidSkinRequest& request);
 
+// 独立参考实现：重新核对无控制器来源，使用局部 identity；不改变普通骨骼采样规则。
+[[nodiscard]] Result<MdxRigidSkinnedGeoset> SampleMdxRigidStaticPreviewGeoset(
+    const MdxModel& model, const MdxRigidSkinRequest& request);
+
 } // namespace War3Map::Render

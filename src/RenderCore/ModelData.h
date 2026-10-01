@@ -61,6 +61,7 @@ using ColorChannel = GeoChannel<3>;
 struct ModelData {
     AssetIdentity identity;
     AssetSource source;
+    std::shared_ptr<const War3Map::Render::MdxRigidStaticPreviewSource> rigidStaticPreviewSource;
     std::vector<CompiledNode> nodes;
     std::vector<Sequence> sequences;
     std::vector<GeosetLayout> geosets;
