@@ -28,7 +28,7 @@ std::vector<std::byte> Fixture(std::uint32_t mode, bool global) {
                 if (animated) {
                     out.Tag("KMTA"); out.U32(2); out.U32(mode); out.U32(global ? 0 : UINT32_MAX);
                     for (auto frame : {0u, 1000u}) {
-                        out.U32(frame); out.F32(frame ? 0 : 1);
+                        out.U32(frame); out.F32(frame ? 0.0f : 1.0f);
                         if (mode >= 2) { out.F32(mode == 2 ? 0 : .25f); out.F32(mode == 2 ? 0 : .75f); }
                     }
                 }
