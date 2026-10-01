@@ -9,7 +9,8 @@ using Interpolation = War3Map::Render::MdxInterpolation;
 
 template <std::size_t N>
 std::array<float, N> SampleTrack(const Track<N>& track, std::array<float, N> fallback,
-    const Sequence& sequence, std::uint32_t frame, std::uint64_t globalTime, Evaluation& e) noexcept {
+    const Sequence& sequence, std::uint32_t sequenceIndex, std::uint32_t frame,
+    std::uint64_t globalTime, Evaluation& e) noexcept {
     if (!e.Good() || !track.present) return fallback;
     if (track.error != Code::Ok) { e.Fail(track.error); return fallback; }
     const auto keyValue = [&](const Key<N>& key) {
@@ -22,20 +23,36 @@ std::array<float, N> SampleTrack(const Track<N>& track, std::array<float, N> fal
     const std::int64_t time = track.global
         ? (track.period == 0 ? 0 : static_cast<std::int64_t>(globalTime % track.period)) : frame;
     // 全局键加载时减去首帧，使用全部键；周期外的右键仍可能参与当前插值。
-    const auto begin = track.global ? track.keys.begin() : std::lower_bound(track.keys.begin(), track.keys.end(), beginTime,
-        [](const auto& key, auto value) { return key.frame < value; });
-    const auto end = track.global ? track.keys.end() : std::upper_bound(begin, track.keys.end(), endTime,
-        [](auto value, const auto& key) { return value < key.frame; });
+    auto begin = track.keys.begin(), end = track.keys.end();
+    if (!track.sequenceKeys.empty()) {
+        const auto range = track.sequenceKeys[sequenceIndex];
+        if (range.offset == NoIndex) { e.Fail(Code::PoseKeysInvalid); return fallback; }
+        begin += range.offset; end = begin + range.count;
+    } else if (!track.global) {
+        begin = std::lower_bound(begin, end, beginTime, [](const auto& key, auto value) { return key.frame < value; });
+        end = std::upper_bound(begin, end, endTime, [](auto value, const auto& key) { return value < key.frame; });
+    }
     if (begin == end) return fallback;
     if (end - begin == 1) return keyValue(*begin);
-    const auto found = std::lower_bound(begin, end, time,
-        [](const auto& key, auto value) { return key.frame < value; });
-    if (found != end && found->frame == time) return keyValue(*found);
-    if (found == begin || found == end) { e.Fail(Code::PoseBoundaryUnsupported); return fallback; }
-    const auto& left = *(found - 1);
-    const auto& right = *found;
-    const auto factor = static_cast<double>(time - left.frame) / (static_cast<std::int64_t>(right.frame) - left.frame);
-    if (track.interpolation == Interpolation::None) return keyValue(left);
+    // 原版按源序保留同帧键，sample >= next.frame 时继续，精确命中取最后键。
+    const auto found = std::upper_bound(begin, end, time,
+        [](auto value, const auto& key) { return value < key.frame; });
+    if (found != begin && (found - 1)->frame == time) return keyValue(*(found - 1));
+    const bool seam = found == begin || found == end;
+    const auto& left = *(seam ? end - 1 : found - 1);
+    const auto& right = *(seam ? begin : found);
+    // 1.27a 的末键右邻回到首键；首键前虽然改选末键，时间差仍取原首键。
+    // 负跨度只加当前动作长度（全局轨迹也如此），不能改成全局周期或钳值。
+    const auto offset = time - (found == begin ? begin->frame : left.frame);
+    auto span = static_cast<std::int64_t>(right.frame) - left.frame;
+    if (span < 0) span += static_cast<std::int64_t>(sequence.end) - sequence.start;
+    if (seam && (time > INT32_MAX || offset < INT32_MIN || offset > INT32_MAX
+        || span < INT32_MIN || span > INT32_MAX)) {
+        e.Fail(Code::PoseBoundaryUnsupported); return fallback;
+    }
+    if (track.interpolation == Interpolation::None || span == 0) return keyValue(left);
+    // 端点/时间规则来自原版；浮点插值仍沿用本预览实现，不宣称逐位原版等价。
+    const auto factor = static_cast<double>(offset) / static_cast<double>(span);
     if constexpr (N == 4) {
         if (track.interpolation == Interpolation::Linear) return Slerp(left.value, right.value, factor, e);
         e.Warn(Code::GenericRotationPreview, static_cast<std::int64_t>(left.frame) + track.origin,
@@ -90,13 +107,13 @@ bool EvaluateComputed(const ModelData& model, const PoseRequest& request, std::u
         node.objectId = source.layout.objectId; node.parentId = source.layout.parentId; node.pivot = source.pivot;
         e.objectId = node.objectId;
         e.track = TrackKind::Translation;
-        node.translation = SampleTrack(source.translation, node.translation, sequence, frame, request.globalElapsedMs, e);
+        node.translation = SampleTrack(source.translation, node.translation, sequence, request.sequenceIndex, frame, request.globalElapsedMs, e);
         if (!e.Good()) return false;
         e.track = TrackKind::Rotation;
-        node.rotation = Normalize(SampleTrack(source.rotation, node.rotation, sequence, frame, request.globalElapsedMs, e), e);
+        node.rotation = Normalize(SampleTrack(source.rotation, node.rotation, sequence, request.sequenceIndex, frame, request.globalElapsedMs, e), e);
         if (!e.Good()) return false;
         e.track = TrackKind::Scale;
-        node.scaling = SampleTrack(source.scaling, node.scaling, sequence, frame, request.globalElapsedMs, e);
+        node.scaling = SampleTrack(source.scaling, node.scaling, sequence, request.sequenceIndex, frame, request.globalElapsedMs, e);
         if (!e.Good()) return false;
         node.localMatrix = LocalMatrix(node, e);
         node.worldMatrix = source.layout.parentIndex == NoIndex ? node.localMatrix

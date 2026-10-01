@@ -24,8 +24,8 @@ DiagnosticText Text(Code code) noexcept {
     case Code::PoseGlobalSequenceInvalid: return {"MDX_POSE_GLOBAL_SEQUENCE_INVALID", "节点轨迹引用不存在的全局序列。"};
     case Code::PoseZeroGlobalKeysUnsupported: return {"MDX_POSE_ZERO_GLOBAL_KEYS_UNSUPPORTED", "零周期全局轨迹有多个键但没有0帧键，边界取键规则尚未支持。"};
     case Code::PoseGlobalSpanUnsupported: return {"MDX_POSE_GLOBAL_SPAN_UNSUPPORTED", "全局轨迹归零后的帧跨度超出已确认的有符号范围。"};
-    case Code::PoseKeysInvalid: return {"MDX_POSE_KEYS_INVALID", "节点轨迹帧必须严格递增。"};
-    case Code::PoseBoundaryUnsupported: return {"MDX_POSE_BOUNDARY_UNSUPPORTED", "当前帧不在两个真实按键之间；尚未确认序列边界补键规则。"};
+    case Code::PoseKeysInvalid: return {"MDX_POSE_KEYS_INVALID", "本次节点采样触及逆序帧区间；未实现原版逆序缓存语义，同帧按源序保留。"};
+    case Code::PoseBoundaryUnsupported: return {"MDX_POSE_BOUNDARY_UNSUPPORTED", "轨迹接缝超出已确认的有符号时间范围，尚未模拟原版整数回绕。"};
     case Code::PoseNumberInvalid: return {"MDX_POSE_NUMBER_INVALID", "节点轨迹或矩阵产生非有限数值。"};
     case Code::PoseRotationInvalid: return {"MDX_POSE_ROTATION_INVALID", "节点四元数长度为零或超出可求值范围。"};
     case Code::PoseCameraInvalid: return {"MDX_POSE_CAMERA_INVALID", "模型局部相机超出有界预览范围，或方向退化。"};

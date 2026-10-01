@@ -18,6 +18,7 @@ struct TextureRgba {
 };
 struct SkinPose {
     std::uint64_t sceneVersion = 0, contentVersion = 0;
+    std::uint32_t matrixFormat = WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4;
     std::vector<War3RenderSkinnedModelInstanceV2> instances;
     std::vector<War3RenderGroupMatrixV2> groups;
     std::vector<float> alphas;

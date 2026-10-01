@@ -77,6 +77,19 @@ void Run() {
     Check(Compare(zero,500,50)==Code::Ok && *SampleMdxGeosetAlpha(zero,{1,1,500,50}).value==0.375f &&
         *SampleMdxGeosetColor(zero,{1,1,500,50}).value==Vec3{0.25f,0.25f,0.75f},"归零后周期外右键插值错误");
     constant.colorKeys.back().frame=UINT32_MAX;Check(Compare(zero,500,0)==Code::GeoaGlobalSpanUnsupported,"全局帧跨度溢出未拒绝");
+    // Necropolis 类型：整条轨迹有多个动作的键，但当前动作只有末端一键。
+    for (auto mode:{0u,1u,2u,3u}) {
+        auto single=*ParseMdx(Bytes(mode,false)).value;
+        auto& channel=*single.geosets[1].animation;
+        channel.alphaKeys[0].frame=channel.colorKeys[0].frame=700;
+        channel.alphaKeys[0].value=0.25f;channel.colorKeys[0].value={0.25f,0.5f,0.75f};
+        channel.alphaKeys[1].frame=channel.colorKeys[1].frame=2000;
+        for (auto t:{0u,699u,700u,999u}) {
+            Check(Compare(single,t,0)==Code::Ok,"普通动作单键新旧差分");
+            Check(*SampleMdxGeosetAlpha(single,{1,1,t,0}).value==0.25f &&
+                *SampleMdxGeosetColor(single,{1,1,t,0}).value==Vec3{0.25f,0.5f,0.75f},"普通单键错误等待首帧或借用别的动作");
+        }
+    }
     auto model=*ParseMdx(Bytes(2,false)).value;
     model.geosets[1].animation->colorKeys[0].outTangent[0]=20;
     Check(Compare(model,500,0)==Code::Ok,"有限颜色曲线不能产生 NaN");
@@ -92,6 +105,37 @@ void Run() {
     Check(Compare(bad,800,0)==Code::GeoaBoundaryUnsupported,"曲线尾键后未拒绝");
     bad=model;bad.geosets[1].animation->flags=1;
     Check(Compare(bad,500,0)==Code::GeoaUninterpreted,"未知投影位未拒绝");
+    {
+        const auto compiled=CompileMdxModel(bad,{1,1},{"partial.mdx","synthetic","rgb"});
+        Check(compiled.Succeeded(),"局部 GEOA 编译失败");const std::array partialAssets{*compiled.value};
+        BatchLimits limits;limits.maxInstances=1;limits.maxNodes=compiled.value->NodeCount();
+        limits.maxGroups=compiled.value->GroupCount();limits.maxGeosets=compiled.value->GeosetCount();
+        auto strict=PoseBatchEvaluator::Create(partialAssets,1,limits);
+        auto preview=PoseBatchEvaluator::Create(partialAssets,1,limits,GeosetFailurePolicy::PreviewHideInvalidGeosets);
+        Check(strict.Succeeded() && preview.Succeeded(),"部件隔离预热失败");
+        PoseRequest request;request.asset={1,1};request.instance={1,1};request.sequenceIndex=1;request.sequenceElapsedMs=500;
+        Check(strict.value->Evaluate(std::span(&request,1)).failedInstances==1 &&
+            strict.value->Receipts()[0].error==Code::GeoaUninterpreted && strict.value->GeosetIssues(0).empty(),"严格入口被预览放宽");
+        RenderCoreAllocProbe::Begin();const auto result=preview.value->Evaluate(std::span(&request,1));
+        const auto allocated=RenderCoreAllocProbe::End();
+        const auto issues=preview.value->GeosetIssues(0);
+        Check(result.error==Code::Ok && result.failedInstances==0 && allocated==0 &&
+            preview.value->Receipts()[0].poseVersion!=0 && preview.value->Groups(0).size()==compiled.value->GroupCount(),
+            "部分预览丢失真姿势或热路径发生分配");
+        Check(issues.size()==1 && issues[0].geosetIndex==1 && issues[0].diagnostic.code==Code::GeoaUninterpreted &&
+            issues[0].diagnostic.objectId==NoIndex && preview.value->Alphas(0)[1]==0 && preview.value->Colors(0)[1]==Vec3{},
+            "坏部件未透明隔离或来源身份错误");
+        const auto goodAlpha=SampleMdxGeosetAlpha(bad,{0,1,500,0});const auto goodColor=SampleMdxGeosetColor(bad,{0,1,500,0});
+        Check(goodAlpha.Succeeded() && goodColor.Succeeded() && preview.value->Alphas(0)[0]==*goodAlpha.value &&
+            preview.value->Colors(0)[0]==*goodColor.value,"隔离破坏好部件数值");
+        Check(preview.value->StorageBytes()>strict.value->StorageBytes(),"预览缓存未计入预算");
+        limits.maxBytes=strict.value->StorageBytes();
+        const auto bounded=PoseBatchEvaluator::Create(partialAssets,1,limits,GeosetFailurePolicy::PreviewHideInvalidGeosets);
+        Check(!bounded.Succeeded() && bounded.diagnostics[0].code==CodeName(Code::CapacityExceeded),"预览绕过严格存储预算");
+        const std::array excess{request,request};
+        Check(preview.value->Evaluate(excess).error==Code::CapacityExceeded && preview.value->Receipts().empty() &&
+            preview.value->GeosetIssues(0).empty(),"前检失败泄漏上帧部件诊断");
+    }
     // 两实例 RGB 在同一批独立，重复求值逐位一致，外部组矩阵仍使用各自时钟颜色。
     auto plain=*ParseMdx(Bytes(1,false)).value;auto built=CompileMdxModel(plain,{1,1},{"x","test","rgb"});
     const std::array assets{*built.value};auto made=PoseBatchEvaluator::Create(assets,1);auto evaluator=std::move(*made.value);

@@ -37,8 +37,56 @@ bool ControlValid(const std::array<float, N>& values) {
 }
 
 template <std::size_t N>
+void CompileSequenceKeys(Track<N>& track, const std::vector<MdxSequence>& sequences, Budget& budget) {
+    using Interval = std::pair<std::int32_t, std::int32_t>;
+    budget.Charge(sequences.size(), sizeof(Range32));
+    budget.Charge(track.keys.size(), sizeof(Interval) + sizeof(std::uint32_t));
+    std::vector<Interval> invalid;
+    invalid.reserve(track.keys.size());
+    for (std::size_t i = 1; i < track.keys.size(); ++i)
+        if (track.keys[i].frame < track.keys[i - 1].frame)
+            invalid.emplace_back(track.keys[i].frame, track.keys[i - 1].frame);
+    // 只排序/合并诊断区间，原键及其切线完整保留原顺序。
+    std::sort(invalid.begin(), invalid.end());
+    std::size_t used = 0;
+    for (const auto interval : invalid) {
+        if (used != 0 && interval.first <= invalid[used - 1].second)
+            invalid[used - 1].second = std::max(invalid[used - 1].second, interval.second);
+        else invalid[used++] = interval;
+    }
+    invalid.resize(used);
+    std::vector<std::uint32_t> safe;
+    safe.reserve(track.keys.size());
+    for (std::uint32_t i = 0; i < track.keys.size(); ++i) {
+        const auto frame = track.keys[i].frame;
+        const auto bad = std::lower_bound(invalid.begin(), invalid.end(), frame,
+            [](const auto& interval, auto value) { return interval.second < value; });
+        if (bad == invalid.end() || frame < bad->first) safe.push_back(i);
+    }
+    // 去掉所有逆序边覆盖的帧后，索引天然单调；不重排任何键来恢复坏动作。
+    track.sequenceKeys.reserve(sequences.size());
+    for (const auto& sequence : sequences) {
+        const auto bad = std::lower_bound(invalid.begin(), invalid.end(), static_cast<std::int64_t>(sequence.start),
+            [](const auto& interval, auto value) { return interval.second < value; });
+        if (bad != invalid.end() && bad->first <= static_cast<std::int64_t>(sequence.end)) {
+            track.sequenceKeys.push_back({NoIndex, 0}); continue;
+        }
+        const auto begin = std::lower_bound(safe.begin(), safe.end(), static_cast<std::int64_t>(sequence.start),
+            [&](auto index, auto value) { return track.keys[index].frame < value; });
+        const auto end = std::upper_bound(begin, safe.end(), static_cast<std::int64_t>(sequence.end),
+            [&](auto value, auto index) { return value < track.keys[index].frame; });
+        if (begin == end) track.sequenceKeys.push_back({});
+        else {
+            const auto count = *(end - 1) - *begin + 1;
+            track.sequenceKeys.push_back(count == static_cast<std::uint32_t>(end - begin)
+                ? Range32{*begin, count} : Range32{NoIndex, 0});
+        }
+    }
+}
+
+template <std::size_t N>
 Track<N> CompileTrack(const std::optional<MdxNodeTrack<N>>& source,
-    const std::vector<std::uint32_t>& periods) {
+    const std::vector<std::uint32_t>& periods, const std::vector<MdxSequence>& sequences, Budget& budget) {
     Track<N> track;
     if (!source) return track;
     track.present = true;
@@ -58,11 +106,15 @@ Track<N> CompileTrack(const std::optional<MdxNodeTrack<N>>& source,
     track.keys.reserve(source->keys.size());
     if (track.global && !source->keys.empty()) track.origin = source->keys.front().frame;
     std::int64_t previous = std::numeric_limits<std::int64_t>::min();
+    bool descending = false;
     for (const auto& key : source->keys) {
-        if (key.frame <= previous) {
-            track.error = Code::PoseKeysInvalid;
-            track.keys.clear();
-            return track;
+        if (key.frame < previous) {
+            descending = true;
+            if (track.global) {
+                track.error = Code::PoseKeysInvalid;
+                track.keys.clear();
+                return track;
+            }
         }
         previous = key.frame;
         const auto frame = static_cast<std::int64_t>(key.frame) - track.origin;
@@ -74,6 +126,7 @@ Track<N> CompileTrack(const std::optional<MdxNodeTrack<N>>& source,
         track.keys.push_back({static_cast<std::int32_t>(frame), key.value, key.inTangent, key.outTangent,
             Finite(key.value), ControlValid(key.inTangent), ControlValid(key.outTangent)});
     }
+    if (descending) CompileSequenceKeys(track, sequences, budget);
     return track;
 }
 
@@ -177,9 +230,9 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
             CompiledNode compiled;
             compiled.layout = {n.objectId, n.parentId, parent[index] == NoIndex ? NoIndex : toTopo[parent[index]], n.flags};
             compiled.pivot = model.pivots[n.objectId];
-            compiled.translation = CompileTrack(n.translation, model.globalSequences);
-            compiled.rotation = CompileTrack(n.rotation, model.globalSequences);
-            compiled.scaling = CompileTrack(n.scaling, model.globalSequences);
+            compiled.translation = CompileTrack(n.translation, model.globalSequences, model.sequences, budget);
+            compiled.rotation = CompileTrack(n.rotation, model.globalSequences, model.sequences, budget);
+            compiled.scaling = CompileTrack(n.scaling, model.globalSequences, model.sequences, budget);
             toTopo[index] = static_cast<std::uint32_t>(out->nodes.size());
             out->nodes.push_back(std::move(compiled)); state[index] = 2;
         }

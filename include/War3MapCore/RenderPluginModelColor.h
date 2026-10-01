@@ -35,6 +35,12 @@ struct War3RenderSkinDynamicColorCapabilitiesV2 {
     War3RenderSkinColorCapabilitiesV2 base;
     std::uint32_t dynamicColorFormat, reserved;
 };
+struct War3RenderSkinSharedRangeCapabilitiesV2 {
+    War3RenderSkinDynamicColorCapabilitiesV2 base;
+    std::uint32_t sharedRangeMatrixFormat, reserved;
+};
+static_assert(offsetof(War3RenderSkinSharedRangeCapabilitiesV2, base) == 0);
+static_assert(std::is_standard_layout_v<War3RenderSkinSharedRangeCapabilitiesV2>);
 static_assert(offsetof(War3RenderDynamicColoredSkinUpdateV2, base) == 0);
 static_assert(offsetof(War3RenderSkinDynamicColorCapabilitiesV2, base) == 0);
 static_assert(std::is_standard_layout_v<War3RenderDynamicColoredSkinUpdateV2>);

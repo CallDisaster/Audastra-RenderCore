@@ -110,6 +110,7 @@ struct MdxGeoset {
     std::optional<MdxGeosetAnimation> animation; // 显式动作按帧求 KGAO；静态视图仍用 visibleInStand
     std::size_t skippedPrimitiveGroups = 0;    // 非三角形图元组（未显示）
     std::size_t uninterpretedTailBytes = 0;    // GEOS 的未知尾部，禁止据此声称蒙皮拓扑完整
+    std::uint32_t selectionGroup = 0, selectionFlags = 0; // GEOS 原值；未知标志不推定为可选
 };
 
 struct MdxSequence {
@@ -198,6 +199,26 @@ struct MdxLight {
     std::vector<MdxScalarKey> intensityKeys, ambientIntensityKeys; // KLAI、KLBI
 };
 
+// 布局名描述本读取器实际消费的文件字节；type1/3 尚不能等同于原版运行时形状类型。
+enum class MdxCollisionLayout : std::uint32_t {
+    BoxVertices24, SphereCenterRadius16,
+    UnverifiedType1Vertices24, UnverifiedType3VerticesRadius28
+};
+enum class MdxCollisionSupport : std::uint32_t {
+    Supported, LayoutAmbiguous, NonFinite, InvalidRadius
+};
+struct MdxCollisionShape {
+    std::uint32_t sourceIndex = 0; // 跨 CLID 块的原始顺序，包括无法用于点选的形状
+    std::uint32_t sourceType = 0, nodeId = 0, vertexCount = 0, payloadBytes = 0;
+    std::array<std::array<float, 3>, 2> vertices{};
+    float radius = 0;
+    bool hasRadius = false;
+    std::array<std::uint32_t, 7> rawWords{}; // 原始浮点位；未使用槽为零，不修复 NaN/-0
+    MdxCollisionLayout layout = MdxCollisionLayout::BoxVertices24;
+    // Supported 仅表示已证的 type0/2 布局与有限几何输入，不表示原版游戏点选已验收。
+    MdxCollisionSupport support = MdxCollisionSupport::LayoutAmbiguous;
+};
+
 struct MdxModel {
     std::uint32_t version = 0;
     std::string name;
@@ -216,6 +237,7 @@ struct MdxModel {
     bool skinningTopologyComplete = false; // GEOS 矩阵引用、节点父链和 pivot 的数据已闭合；不表示已实现蒙皮
     std::string skinningTopologyIssue; // 不完整时显式说明；静态几何仍可读取
     std::size_t skippedChunks = 0; // 按大小跳过的其它块（粒子等）
+    std::vector<MdxCollisionShape> collisionShapes; // 只读 CLID 来源，不提供写入/保存能力
 };
 
 // 仅用于进程内解析数据，不是插件/IPC 布局；跨边界描述符仍用定宽计数。

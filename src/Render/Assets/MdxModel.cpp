@@ -207,8 +207,8 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
         for (std::uint32_t i = 0; i < matrixIndexCount; ++i)
             geoset.matrixIndices.push_back(reader.U32("矩阵节点 ID"));
         geoset.materialId = reader.U32("geoset 材质");
-        reader.U32("选择组");
-        reader.U32("选择标志");
+        geoset.selectionGroup = reader.U32("选择组");
+        geoset.selectionFlags = reader.U32("选择标志");
         reader.Skip(28, "geoset 包围盒");
         reader.Skip(static_cast<std::size_t>(reader.Count(28, limits.maxSequences, "动作包围盒")) * 28, "动作包围盒");
         reader.ExpectTag("UVAS", "UV 组");

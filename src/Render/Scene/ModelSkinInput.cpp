@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstddef>
 #include <limits>
+#include <iterator>
+#include <map>
 
 namespace War3Map::Render {
 namespace {
@@ -43,9 +45,10 @@ bool ValidateModelGeometry(const ModelScene& scene, std::uint32_t textureCount) 
     return true;
 }
 bool CopySkinUpdate(const War3RenderSkinUpdateV2& input, const ModelScene& scene, SkinPose& pose) {
+    const bool shared = input.matrixFormat == WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4_SHARED_RANGES;
     if (input.structSize < sizeof(input) || !input.sceneVersion || !input.contentVersion || input.reserved
-        || input.instanceCount > 262144 || input.groupCount > 1048576 || input.alphaCount > 1048576
-        || input.matrixFormat != WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4
+        || input.groupCount > 1048576 || input.alphaCount > 1048576
+        || (!shared && input.matrixFormat != WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4)
         || input.matrixStrideBytes != sizeof(War3RenderGroupMatrixV2) || input.worldTransformApplied
         || (input.instanceCount && !input.instances) || (input.groupCount && !input.groups)
         || (input.alphaCount && !input.alphas)) return false;
@@ -67,28 +70,50 @@ bool CopySkinUpdate(const War3RenderSkinUpdateV2& input, const ModelScene& scene
         Copy(pose.colors,colored->colors,colored->colorCount);
     }
     pose.sceneVersion = input.sceneVersion; pose.contentVersion = input.contentVersion;
+    pose.matrixFormat = input.matrixFormat;
     std::uint64_t groupEnd = 0, alphaEnd = 0;
+    // 只允许同模型完整片段别名；跨模型和部分重叠都不是合法共享。
+    struct Slice { std::uint32_t end, model; };
+    std::map<std::uint32_t, Slice> groupSlices, alphaSlices;
+    const auto bindSlice = [](auto& slices, std::uint32_t first, std::uint32_t count,
+        std::size_t capacity, std::uint32_t model) {
+        if (!count || first > capacity || count > capacity - first) return false;
+        const auto end = first + count;
+        const auto next = slices.lower_bound(first);
+        if (next != slices.end() && next->first == first)
+            return next->second.end == end && next->second.model == model;
+        if ((next != slices.end() && next->first < end)
+            || (next != slices.begin() && std::prev(next)->second.end > first)) return false;
+        slices.emplace_hint(next, first, Slice{end, model});
+        return true;
+    };
     std::uint32_t previous = 0;
     for (const auto& instance : pose.instances) {
         const auto model = instance.instance.model;
-        if (model >= scene.models.size() || model < previous || instance.firstGroup != groupEnd || instance.firstAlpha != alphaEnd)
+        if (model >= scene.models.size() || model < previous)
             return false;
         previous = model;
-        groupEnd += scene.modelGroupCounts[model]; alphaEnd += scene.models[model].meshCount;
-        if (groupEnd > pose.groups.size() || alphaEnd > pose.alphas.size()) return false;
+        if (shared) {
+            if (!bindSlice(groupSlices, instance.firstGroup, scene.modelGroupCounts[model], pose.groups.size(), model)
+                || !bindSlice(alphaSlices, instance.firstAlpha, scene.models[model].meshCount, pose.alphas.size(), model)) return false;
+        } else {
+            if (instance.firstGroup != groupEnd || instance.firstAlpha != alphaEnd) return false;
+            groupEnd += scene.modelGroupCounts[model]; alphaEnd += scene.models[model].meshCount;
+            if (groupEnd > pose.groups.size() || alphaEnd > pose.alphas.size()) return false;
+        }
         for (const auto value : instance.instance.transform) if (!Coordinate(value)) return false;
         for (const auto value : instance.instance.color) if (!Unit(value)) return false;
     }
-    if (groupEnd != pose.groups.size() || alphaEnd != pose.alphas.size()) return false;
+    if (!shared && (groupEnd != pose.groups.size() || alphaEnd != pose.alphas.size())) return false;
     for (const auto& group : pose.groups) for (const auto value : group.values) if (!Coordinate(value)) return false;
     for (const auto alpha : pose.alphas) if (!std::isfinite(alpha)) return false;
     if (scene.initialSkin) {
         const auto& initial = *scene.initialSkin;
-        if (pose.sceneVersion != initial.sceneVersion || pose.instances.size() != initial.instances.size()
+        if (pose.sceneVersion != initial.sceneVersion || pose.matrixFormat != initial.matrixFormat || pose.instances.size() != initial.instances.size()
             || pose.groups.size() != initial.groups.size() || pose.alphas.size() != initial.alphas.size() || pose.colors.size() != initial.colors.size()) return false;
         for (std::size_t i = 0; i < pose.instances.size(); ++i) {
             const auto& a = pose.instances[i]; const auto& b = initial.instances[i];
-            if (a.instance.model != b.instance.model || a.firstGroup != b.firstGroup || a.firstAlpha != b.firstAlpha) return false;
+            if (a.instance.model != b.instance.model || (!shared && (a.firstGroup != b.firstGroup || a.firstAlpha != b.firstAlpha))) return false;
         }
     }
     return true;

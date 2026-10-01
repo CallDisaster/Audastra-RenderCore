@@ -33,6 +33,11 @@ struct BatchData {
 struct ExternalBatchData {
     std::vector<ExternalFrameReceipt> receipts;
 };
+struct GeosetPreviewData {
+    std::vector<GeosetIssue> issues;
+    std::vector<Range32> ranges;
+    std::uint64_t storageBytes = 0;
+};
 } // namespace Detail
 namespace {
 using namespace Detail;
@@ -109,7 +114,8 @@ Code ExternalCheck(const ModelData& model, const PoseRequest& request, std::span
 }
 void EvaluateOne(const CompiledModel& asset, const PoseRequest& request, std::span<const GroupMatrix> external,
     std::span<NodePose> nodes, std::span<GroupMatrix> groups, std::span<float> alphas, std::span<Vec3> colors,
-    PoseReceipt& receipt, Evaluation& e) noexcept {
+    PoseReceipt& receipt, Evaluation& e, GeosetPreviewData* preview,
+    std::span<GeosetIssue> issues, std::uint32_t& issueCount) noexcept {
     const auto& model = *ModelAccess::Get(asset);
     if (request.asset != model.identity) { e.Fail(Code::AssetStale); return; }
     if (request.instance.value == 0) { e.Fail(Code::InstanceIdentityInvalid); return; }
@@ -135,7 +141,9 @@ void EvaluateOne(const CompiledModel& asset, const PoseRequest& request, std::sp
         }
     }
     e.objectId = NoIndex; e.track = TrackKind::None;
-    (void)EvaluateGeosets(model, sequence, receipt.sequenceFrame, request.globalElapsedMs, alphas, colors, e);
+    if (preview) (void)EvaluateGeosets(model, sequence, receipt.sequenceFrame, request.globalElapsedMs,
+        alphas, colors, e, issues, issueCount);
+    else (void)EvaluateGeosets(model, sequence, receipt.sequenceFrame, request.globalElapsedMs, alphas, colors, e);
 }
 } // namespace
 
@@ -203,6 +211,30 @@ War3Map::Result<PoseBatchEvaluator> PoseBatchEvaluator::CreateImpl(
     catch (const std::length_error&) { return failure(Code::AllocationFailed); }
 }
 
+War3Map::Result<PoseBatchEvaluator> PoseBatchEvaluator::Create(
+    std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
+    GeosetFailurePolicy policy) {
+    const auto failure = [](Code code) {
+        return War3Map::Result<PoseBatchEvaluator>::Failure("RenderCore.Prepare", CodeName(code), CodeMessage(code));
+    };
+    if (policy != GeosetFailurePolicy::Strict && policy != GeosetFailurePolicy::PreviewHideInvalidGeosets)
+        return failure(Code::RequestInvalid);
+    auto result = Create(assets, evaluationEpoch, limits);
+    if (!result.Succeeded() || policy == GeosetFailurePolicy::Strict) return result;
+    const std::uint64_t bytes = sizeof(GeosetPreviewData)
+        + static_cast<std::uint64_t>(limits.maxGeosets) * sizeof(GeosetIssue)
+        + static_cast<std::uint64_t>(limits.maxInstances) * sizeof(Range32);
+    if (bytes > limits.maxBytes - result.value->StorageBytes()) return failure(Code::CapacityExceeded);
+    try {
+        auto preview = std::make_unique<GeosetPreviewData>();
+        preview->issues.resize(limits.maxGeosets); preview->ranges.resize(limits.maxInstances);
+        preview->storageBytes = bytes;
+        result.value->preview_ = std::move(preview);
+        return result;
+    } catch (const std::bad_alloc&) { return failure(Code::AllocationFailed); }
+    catch (const std::length_error&) { return failure(Code::AllocationFailed); }
+}
+
 BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
     std::span<const GroupMatrix> externalGroups, std::span<const BoneOverride> overrides) noexcept {
     if (!data_) return {Code::RequestInvalid, 0, 0};
@@ -245,10 +277,12 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         receipt.nodes = compact ? Range32{} : Range32{nodeOffset, nodeCount};
         receipt.groups = {groupOffset, groupCount};
         receipt.alphas = {alphaOffset, alphaCount};
+        std::uint32_t issueCount = 0;
+        const auto issues = preview_ ? std::span(preview_->issues).subspan(alphaOffset, alphaCount) : std::span<GeosetIssue>{};
         Evaluation e{std::span(data.diagnostics).subspan(diagnosticOffset, diagnosticCapacity)};
         if (!asset) e.Fail(Code::AssetIndexInvalid);
         else EvaluateOne(*asset, r, externalGroups, std::span(data.nodes).subspan(compact ? 0 : nodeOffset, nodeCount),
-            std::span(data.groups).subspan(groupOffset, groupCount), std::span(data.alphas).subspan(alphaOffset, alphaCount), std::span(data.colors).subspan(alphaOffset,alphaCount), receipt, e);
+            std::span(data.groups).subspan(groupOffset, groupCount), std::span(data.alphas).subspan(alphaOffset, alphaCount), std::span(data.colors).subspan(alphaOffset,alphaCount), receipt, e, preview_.get(), issues, issueCount);
         if (e.Good() && data.lastVersion == UINT64_MAX) e.Fail(Code::VersionExhausted);
         if (!e.Good()) {
             ++failed;
@@ -256,9 +290,11 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
             receipt.nodes = {}; receipt.groups = {}; receipt.alphas = {}; receipt.sequenceFrame = 0;
             // 和参考 Result 的失败行为一致：丢弃此前警告，只发布第一条错误，姿势版本仍为 0。
             e.diagnostics[0] = {e.error, Severity::Error, e.objectId, e.track, 0, 0}; e.used = 1;
+            issueCount = 0;
         } else receipt.poseVersion = ++data.lastVersion;
         receipt.diagnostics = {diagnosticOffset, e.used};
         data.receipts[i] = receipt;
+        if (preview_) preview_->ranges[i] = {alphaOffset, issueCount};
         nodeOffset += nodeCount; groupOffset += groupCount; alphaOffset += alphaCount;
         diagnosticOffset += diagnosticCapacity;
     }
@@ -330,7 +366,7 @@ BatchOutcome PoseBatchEvaluator::EvaluateExternalFrames(std::span<const External
 }
 
 std::uint64_t PoseBatchEvaluator::StorageBytes() const noexcept {
-    return data_ ? data_->storageBytes : 0;
+    return data_ ? data_->storageBytes + (preview_ ? preview_->storageBytes : 0) : 0;
 }
 
 std::span<const PoseReceipt> PoseBatchEvaluator::Receipts() const noexcept {
@@ -364,5 +400,10 @@ std::span<const PoseDiagnostic> PoseBatchEvaluator::Diagnostics(std::uint32_t in
     if (!data_ || index >= data_->active) return {};
     const auto range = data_->receipts[index].diagnostics;
     return std::span<const PoseDiagnostic>(data_->diagnostics).subspan(range.offset, range.count);
+}
+std::span<const GeosetIssue> PoseBatchEvaluator::GeosetIssues(std::uint32_t index) const noexcept {
+    if (!data_ || !preview_ || index >= data_->active || data_->receipts[index].error != Code::Ok) return {};
+    const auto range = preview_->ranges[index];
+    return std::span<const GeosetIssue>(preview_->issues).subspan(range.offset, range.count);
 }
 } // namespace War3RenderCore

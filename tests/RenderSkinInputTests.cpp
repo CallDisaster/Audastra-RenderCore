@@ -2,6 +2,7 @@
 // Copyright (C) 2026 CallDisaster
 
 #include "RenderSkinFixture.h"
+#include "War3RenderCore/Legacy/RenderPluginModelLayers.h"
 #include "../src/Render/Scene/ModelSkinInput.h"
 #include <iostream>
 #include <limits>
@@ -38,12 +39,38 @@ int main() {
         fixture.model.model.firstMesh = 1; rejectScene(); fixture.model.model.firstMesh = 0;
         Check(CopySkinUpdate(update,scene,pose));
         ModelScene recovered; Check(CopySkinnedModelInput(description,recovered,bytes));
+        // 新模式显式允许同模型共享完整片段，并在不改变资产/池容量时切换。
+        auto shared = update; shared.matrixFormat = WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4_SHARED_RANGES;
+        fixture.instances[1].firstGroup = fixture.instances[1].firstAlpha = 0;
+        auto sharedDescription = fixture.Scene(shared);
+        ModelScene sharedScene; Check(CopySkinnedModelInput(sharedDescription, sharedScene, bytes));
+        fixture.instances[1].firstGroup = fixture.instances[1].firstAlpha = 1;
+        ++shared.contentVersion; Check(CopySkinUpdate(shared, sharedScene, pose));
+        auto wrongMode = shared; wrongMode.matrixFormat = WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4;
+        Check(!CopySkinUpdate(wrongMode, sharedScene, pose));
+        fixture.instances[1].firstGroup = 2;
+        Check(!CopySkinUpdate(shared, sharedScene, pose));
+        fixture.instances[1].firstGroup = 1;
+        // 不允许把另一模型的片段声明成自己的；数据恰好同长也不能串姿势。
+        auto aliasedModel = sharedScene;
+        aliasedModel.models.push_back(aliasedModel.models.front());
+        aliasedModel.modelGroupCounts.push_back(1); aliasedModel.initialSkin.reset();
+        fixture.instances[1].instance.model = 1; fixture.instances[1].firstGroup = 0;
+        Check(!CopySkinUpdate(shared, aliasedModel, pose));
+        fixture.instances[1].instance.model = 0; fixture.instances[1].firstGroup = 1;
         War3RenderSkinUpdateV2 empty{}; empty.structSize = sizeof(empty); empty.sceneVersion = 2;
         empty.contentVersion = 1; empty.matrixFormat = WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4; empty.matrixStrideBytes = 48;
         War3RenderSkinnedModelSceneV2 clear{}; clear.structSize = sizeof(clear); clear.initialPose = &empty;
         ModelScene cleared; Check(CopySkinnedModelInput(clear,cleared,bytes) && cleared.vertices.empty());
         static_assert(offsetof(War3RenderPluginApiV2,submitSkinnedModelScene)
             == offsetof(War3RenderPluginApiV2,setOverlayLines) + sizeof(War3RenderPluginApiV2::setOverlayLines));
+        // 0.1.0 的 28 个函数指针前缀尺寸在 x64/Win32 均保持不变。
+        static_assert(offsetof(War3RenderPluginApiV2,getEditorCompletedFrame) == 8 + 28 * sizeof(void(*)()));
+        static_assert(offsetof(War3RenderPluginApiV2,submitModelSceneLayer)
+            == offsetof(War3RenderPluginApiV2,getEditorCompletedFrame) + sizeof(War3RenderPluginApiV2::getEditorCompletedFrame));
+        static_assert(std::is_standard_layout_v<War3RenderLayeredCapturedFrameV2>);
+        static_assert(offsetof(War3RenderLayeredCapturedFrameV2,world) == 16);
+        static_assert(offsetof(War3RenderSkinSharedRangeCapabilitiesV2,base) == 0);
         std::cout << "skin_input copied=1 range_layout_count_rejections=1 recovery=1 old_tail_unchanged=1\n";
         return 0;
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }

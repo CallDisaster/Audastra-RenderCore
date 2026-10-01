@@ -44,6 +44,7 @@ struct Options {
     std::uint32_t layerTexture = 1;
     bool animatedHelper = false;
     bool truncate = false;
+    std::uint32_t selectionGroup = 0, selectionFlags = 0;
 };
 
 inline std::vector<std::byte> BuildTestMdx(const Options& options = {}) {
@@ -86,7 +87,7 @@ inline std::vector<std::byte> BuildTestMdx(const Options& options = {}) {
             w.Tag("GNDX"); w.U32(4); for (int i = 0; i < 4; ++i) w.Raw("\0", 1);
             w.Tag("MTGC"); w.U32(1); w.U32(1);
             w.Tag("MATS"); w.U32(1); w.U32(0);
-            w.U32(options.geosetMaterial); w.U32(0); w.U32(0);
+            w.U32(options.geosetMaterial); w.U32(options.selectionGroup); w.U32(options.selectionFlags);
             for (int i = 0; i < 7; ++i) w.F32(0);
             w.U32(1); for (int i = 0; i < 7; ++i) w.F32(0);
             w.Tag("UVAS"); w.U32(1);

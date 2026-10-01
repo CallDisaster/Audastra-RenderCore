@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 <!-- Copyright (C) 2026 CallDisaster -->
 
-# War3RenderCore 0.1.0
+# War3RenderCore 0.1.1
 
 本机唯一上游：经典 MDX 有界解析、冻结姿态参考、预热 CPU 批量求值、插件输入可移植校验与原创测试。
 只依赖 C++20 编译器和标准库，不包含 Qt、设备、GPU 后端、MPQ 读取或游戏安装逻辑。
@@ -36,3 +36,11 @@ FORGE 通过 WAR3_RENDER_CORE_SOURCE_DIR 引用这个仓库，并检查锁定提
 
 Computed/ExternalGroups 是近似预览；新外部帧输入验证并复制宿主提供的数值。
 绘制只读资产视图本轮仅有规格；原版运行时、游戏集成与共享绘制尚未验证。
+
+0.1.1 将 FORGE `eb35f87` 的轨迹接缝、动作局部逆序区间和模型层契约同步到唯一上游，
+保留 0.1.0 已求值外部帧入口。迁移清单与行为边界见 `docs/UPDATES_0_1_1.md`。
+
+修改流程固定为：先在本仓库修改并验证、建立本地提交，再在 FORGE 运行
+`python tools/dev/update-render-core-lock.py`，由该脚本重新生成提交/版本/全文件 SHA 锁。
+FORGE 配置及实际消费者构建都拒绝未提交的共享修改；不要在 FORGE 恢复第二份实现。
+共享仓库保持无远程、无推送，发布时机仍由作者决定。

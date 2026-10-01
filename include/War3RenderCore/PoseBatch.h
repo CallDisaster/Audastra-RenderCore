@@ -10,7 +10,13 @@
 #include <span>
 
 namespace War3RenderCore {
-namespace Detail { struct BatchData; struct ExternalBatchData; }
+namespace Detail { struct BatchData; struct ExternalBatchData; struct GeosetPreviewData; }
+
+enum class GeosetFailurePolicy : std::uint32_t { Strict = 0, PreviewHideInvalidGeosets = 1 };
+struct GeosetIssue {
+    std::uint32_t geosetIndex = NoIndex; // 原 MDX geoset 编号；不是节点 objectId。
+    PoseDiagnostic diagnostic;         // 原始局部拒绝诊断，不转为整模型成功。
+};
 
 // 一个所有者线程使用一个求值器；不同求值器可共享不可变 CompiledModel。
 // Create 负责容量预热；Evaluate 不分配、不抛异常、不推进宿主时钟。
@@ -26,6 +32,10 @@ public:
 
     [[nodiscard]] static War3Map::Result<PoseBatchEvaluator> Create(
         std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits = {});
+    // 仅显式预览容错已界定 GEOA 数据；原三参数入口和外部帧保持严格。
+    [[nodiscard]] static War3Map::Result<PoseBatchEvaluator> Create(
+        std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
+        GeosetFailurePolicy policy);
 
     // 专用模式：预热新回执且计入预算，不改变旧 Create 的存储估计或预算边界。
     // 两个模式不能互调 Evaluate；误用仍使前次输出失效。
@@ -56,12 +66,16 @@ public:
     // RGB 与 Alphas 共用 geoset 序及回执片段；失败/下次求值后的寿命规则相同。
     [[nodiscard]] std::span<const Vec3> Colors(std::uint32_t instanceIndex) const noexcept;
     [[nodiscard]] std::span<const PoseDiagnostic> Diagnostics(std::uint32_t instanceIndex) const noexcept;
+    // 与对应姿势相同的借用期；严格模式/整实例失败为空，非空表示局部预览。
+    [[nodiscard]] std::span<const GeosetIssue> GeosetIssues(std::uint32_t instanceIndex) const noexcept;
 private:
     [[nodiscard]] static War3Map::Result<PoseBatchEvaluator> CreateImpl(
         std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits, bool externalFrames);
     std::unique_ptr<Detail::BatchData> data_;
     // 单独分配，保留 BatchData 大小，避免改变旧 Create 的预算公式。
     std::unique_ptr<Detail::ExternalBatchData> externalData_;
+    // 独立预分配，仅显式容错模式使用；不改变严格 Create 或外部帧预算。
+    std::unique_ptr<Detail::GeosetPreviewData> preview_;
 };
 
 } // namespace War3RenderCore

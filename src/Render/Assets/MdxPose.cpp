@@ -123,7 +123,8 @@ std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxN
     const bool global = track.globalSequence != UINT32_MAX;
     std::int64_t previous = std::numeric_limits<std::int64_t>::min();
     for (const auto& key : track.keys) {
-        if (key.frame <= previous) Fail("MDX_POSE_KEYS_INVALID", "节点轨迹帧必须严格递增。");
+        if (key.frame < previous && (global || (key.frame <= time.end && previous >= time.start)))
+            Fail("MDX_POSE_KEYS_INVALID", "本次节点采样触及逆序帧区间；未实现原版逆序缓存语义，同帧按源序保留。");
         previous = key.frame;
         if (global && static_cast<std::int64_t>(key.frame) - track.keys.front().frame > INT32_MAX)
             Fail("MDX_POSE_GLOBAL_SPAN_UNSUPPORTED", "全局轨迹归零后的帧跨度超出已确认的有符号范围。");
@@ -134,21 +135,29 @@ std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxN
         CheckFinite(keys.front()->value);
         return keys.front()->value;
     }
-    const auto found = std::lower_bound(keys.begin(), keys.end(), time.frame,
-        [](const auto* key, std::int64_t frame) { return key->frame < frame; });
-    if (found != keys.end() && (*found)->frame == time.frame) {
-        CheckFinite((*found)->value);
-        return (*found)->value;
+    // 独立参考沿用源键，跨过全部相等帧后取最后一条，不去重或重排。
+    const auto found = std::upper_bound(keys.begin(), keys.end(), time.frame,
+        [](std::int64_t frame, const auto* key) { return frame < key->frame; });
+    if (found != keys.begin() && (*(found - 1))->frame == time.frame) {
+        CheckFinite((*(found - 1))->value);
+        return (*(found - 1))->value;
     }
-    if (found == keys.begin() || found == keys.end())
-        Fail("MDX_POSE_BOUNDARY_UNSUPPORTED", "当前帧不在两个真实按键之间；尚未确认序列边界补键规则。");
-    const auto& left = **(found - 1);
-    const auto& right = **found;
-    const auto factor = static_cast<double>(time.frame - left.frame) / (static_cast<std::int64_t>(right.frame) - left.frame);
-    if (track.interpolation == MdxInterpolation::None) {
+    const bool outside = found == keys.begin() || found == keys.end();
+    const auto& left = outside ? *keys.back() : **(found - 1);
+    const auto& right = outside ? *keys.front() : **found;
+    // 独立参考保留源帧：首键前的偏移基准仍是首键，实际端点则是末键/首键。
+    const auto delta = time.frame - (found == keys.begin() ? keys.front()->frame : left.frame);
+    auto interval = static_cast<std::int64_t>(right.frame) - left.frame;
+    if (interval < 0) interval += static_cast<std::int64_t>(sequence.end) - sequence.start;
+    const auto nativeTime = time.frame - (global ? track.keys.front().frame : 0);
+    if (outside && (nativeTime > INT32_MAX || delta < INT32_MIN || delta > INT32_MAX
+        || interval < INT32_MIN || interval > INT32_MAX))
+        Fail("MDX_POSE_BOUNDARY_UNSUPPORTED", "轨迹接缝超出已确认的有符号时间范围，尚未模拟原版整数回绕。");
+    if (track.interpolation == MdxInterpolation::None || interval == 0) {
         CheckFinite(left.value);
         return left.value;
     }
+    const auto factor = static_cast<double>(delta) / static_cast<double>(interval);
     if constexpr (N == 4) {
         if (track.interpolation == MdxInterpolation::Linear)
             return Slerp(left.value, right.value, factor);

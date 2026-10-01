@@ -177,6 +177,9 @@ struct War3RenderOverlayLineV2 { float from[3]; float to[3]; float color[3]; };
 // 模型局部、列向量、四列各三个 float；values[column*3+row]，紧密步长 48 字节。
 // 组内平均已经完成，尚未乘实例世界变换；实例 transform 仍是旧接口的行主序 3x4。
 constexpr std::uint32_t WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4 = 1;
+// 显式新布局：同一模型的实例可共享完整姿势片段；更新可切换片段，不改变静态几何。
+// 宿主必须先探测 sharedRangeMatrixFormat，旧模式的连续/固定偏移合同保持不变。
+constexpr std::uint32_t WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4_SHARED_RANGES = 2;
 struct War3RenderGroupMatrixV2 { float values[12]; };
 struct War3RenderSkinnedModelVertexV2 { War3RenderModelVertexV2 vertex; std::uint32_t group; };
 // group 是该网格组片段内的局部序号；firstGroup 相对模型的组矩阵起点。
@@ -269,6 +272,11 @@ struct War3RenderEditorPresentationTargetV2;
 struct War3RenderEditorVisibilityUpdateV2;
 struct War3RenderEditorCapturedFrameV2;
 struct War3RenderEditorModelSceneV2;
+struct War3RenderEditorCompletedFrameV2;
+struct War3RenderModelSceneLayerV2;
+struct War3RenderModelLayerUpdateV2;
+struct War3RenderModelLayersTargetV2;
+struct War3RenderLayeredCapturedFrameV2;
 struct War3RenderPluginApiV2 {
     std::uint32_t structSize;
     std::uint32_t apiVersion;
@@ -330,6 +338,17 @@ struct War3RenderPluginApiV2 {
         void*, std::uint64_t, War3RenderEditorCapturedFrameV2*);
     // 新模型与显隐同次发布，禁止先提交新模型再用第二次请求补掩码导致短暂显现。
     std::int32_t (WAR3_RENDER_CALL* submitEditorModelScene)(War3RendererHandle, const War3RenderEditorModelSceneV2*);
+    // 可选只读尾部：先核 offsetof+sizeof 指针及非空。0=当前请求的同次完成 Draw/Present，
+    // 2=未完成/已被新请求替代；不等待、不读回像素，失败不写 output。接受更大结构，保留未知尾部。
+    std::int32_t (WAR3_RENDER_CALL* getEditorCompletedFrame)(War3RendererHandle, War3RenderEditorCompletedFrameV2*);
+    // 通用附加模型层尾部：独立修订，始终绑定主模型 epoch；旧插件尺寸不足时明确不支持。
+    std::int32_t (WAR3_RENDER_CALL* submitModelSceneLayer)(War3RendererHandle, const struct War3RenderModelSceneLayerV2*);
+    std::int32_t (WAR3_RENDER_CALL* updateModelSceneLayer)(War3RendererHandle, const struct War3RenderModelLayerUpdateV2*);
+    std::int32_t (WAR3_RENDER_CALL* removeModelSceneLayer)(War3RendererHandle, std::uint64_t layerId,
+        std::uint64_t parentModelEpoch, std::uint64_t expectedRevision);
+    std::int32_t (WAR3_RENDER_CALL* getModelLayersTarget)(War3RendererHandle, struct War3RenderModelLayersTargetV2*);
+    std::int32_t (WAR3_RENDER_CALL* captureLayeredFrameRgba)(War3RendererHandle, std::uint64_t expectedLayersRevision,
+        void*, std::uint64_t, struct War3RenderLayeredCapturedFrameV2*);
 };
 using War3GetRenderPluginApiV2 = const War3RenderPluginApiV2* (WAR3_RENDER_CALL*)(std::uint32_t);
 WAR3_RENDER_EXPORT const War3RenderPluginApiV2* WAR3_RENDER_CALL

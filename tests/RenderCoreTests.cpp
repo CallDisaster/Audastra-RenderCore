@@ -116,6 +116,31 @@ void Oracle() {
     for (const auto time : std::array<std::uint64_t, 8>{0, 1, 249, 500, 999, 1000, 1001, UINT64_MAX}) {
         auto r = Request(); r.sequenceElapsedMs = time; AgainstReference(model, r);
     }
+    // 独立期望值覆盖跳变前、同帧最后键、跳变后和区间末端的重复键。
+    for (const bool global : {false, true}) {
+        auto m = model; m.sequences[1].end = 4; m.sequences[1].flags = 1; m.globalSequences = {8};
+        auto& node = m.helpers[0];
+        node.translation = MdxNodeTrack<3>{MdxInterpolation::Linear, global ? 0u : UINT32_MAX,
+            {{0, {0, 0, 0}, {}, {}}, {2, {10, 0, 0}, {}, {}}, {2, {20, 0, 0}, {}, {}},
+             {4, {30, 0, 0}, {}, {}}, {4, {40, 0, 0}, {}, {}}}};
+        node.scaling = MdxNodeTrack<3>{MdxInterpolation::Linear, global ? 0u : UINT32_MAX,
+            {{0, {1, 1, 1}, {}, {}}, {2, {3, 1, 1}, {}, {}}, {2, {5, 1, 1}, {}, {}},
+             {4, {7, 1, 1}, {}, {}}, {4, {9, 1, 1}, {}, {}}}};
+        node.rotation = MdxNodeTrack<4>{MdxInterpolation::Linear, global ? 0u : UINT32_MAX,
+            {{0, {0, 0, 0, 1}, {}, {}}, {2, {0, 0, 0, 1}, {}, {}}, {2, {0, 0, 1, 0}, {}, {}},
+             {4, {0, 0, 1, 0}, {}, {}}, {4, {0, 0, 0, 1}, {}, {}}}};
+        const std::array<float, 4> x{5, 20, 25, 40}, scale{2, 5, 6, 9};
+        for (std::uint64_t time = 1; time <= 4; ++time) {
+            auto r = Request(); r.sequenceElapsedMs = time; r.globalElapsedMs = time;
+            AgainstReference(m, r);
+            const auto pose = *SampleMdxNodePose(m, ReferenceRequest(r, 1)).value;
+            const auto rotation = time == 1 || time == 4 ? Quaternion{0, 0, 0, 1} : Quaternion{0, 0, 1, 0};
+            const auto index = static_cast<std::size_t>(time - 1);
+            Require(pose.chain.back().translation == Vec3{x[index], 0, 0}
+                && pose.chain.back().scaling == Vec3{scale[index], 1, 1}
+                && pose.chain.back().rotation == rotation, "重复 TRS 键没有按源序取值");
+        }
+    }
     for (std::uint32_t mode = 0; mode < 4; ++mode) {
         auto m = model; m.globalSequences = {1000};
         m.helpers[0].translation->interpolation = static_cast<MdxInterpolation>(mode);
@@ -141,12 +166,34 @@ void Oracle() {
     m = model; m.helpers[0].translation->keys.clear(); AgainstReference(m);
     m.helpers[0].translation->keys = {{500, {3, 2, 1}, {}, {}}}; AgainstReference(m);
     m = model; m.geosets[0].animation = MdxGeosetAnimation{}; m.geosets[0].animation->staticAlpha = -0.25f; AgainstReference(m);
+    // 原版接缝不是钳值：首键前的分子仍以首键为基准，分母取动作长度。
+    for (const bool global : {false, true}) {
+        auto seam = model; seam.globalSequences = {2000};
+        seam.helpers[0].translation = MdxNodeTrack<3>{MdxInterpolation::Linear, global ? 0u : UINT32_MAX,
+            {{100, {10, 0, 0}, {}, {}}, {700, {70, 0, 0}, {}, {}}}};
+        for (const auto time : {50ull, 800ull}) {
+            auto request = Request(); request.sequenceElapsedMs = time; request.globalElapsedMs = time;
+            AgainstReference(seam, request);
+            const auto x = SampleMdxNodePose(seam, ReferenceRequest(request, 1)).value->chain.back().translation[0];
+            Require(x == (global ? (time == 50 ? 15.0f : 40.0f) : (time == 50 ? 77.5f : 55.0f)), "节点接缝取键或周期来源错误");
+        }
+    }
     // 逐个破坏语义，检查动态拒绝码；不同时塞多个坏字段混淆优先级。
     m = model; m.helpers[0].translation->keys[0].frame = 100; AgainstReference(m, Request(), Code::Ok);
-    r = Request(); r.sequenceElapsedMs = 50; AgainstReference(m, r, Code::PoseBoundaryUnsupported);
+    r = Request(); r.sequenceElapsedMs = 50; AgainstReference(m, r);
     m = model; m.helpers[0].translation->keys[1].frame = 700;
-    r.sequenceElapsedMs = 800; AgainstReference(m, r, Code::PoseBoundaryUnsupported);
-    m = model; m.helpers[0].translation->keys[1].frame = 0; AgainstReference(m, Request(), Code::PoseKeysInvalid);
+    r.sequenceElapsedMs = 800; AgainstReference(m, r);
+    m = model; m.helpers[0].translation->keys[1].frame = -1; AgainstReference(m, Request(), Code::PoseKeysInvalid);
+    // 原序不变：坏区间只阻止相交动作，无关动作和没有键的动作仍可采样。
+    m = model; m.helpers[0].translation->keys = {{0, {}, {}, {}}, {100, {10,0,0}, {}, {}},
+        {200, {20,0,0}, {}, {}}, {150, {15,0,0}, {}, {}}, {300, {30,0,0}, {}, {}},
+        {2000, {20,0,0}, {}, {}}, {3000, {30,0,0}, {}, {}}};
+    r = Request(); r.sequenceIndex = 0; AgainstReference(m, r);
+    r.sequenceIndex = 1; AgainstReference(m, r, Code::PoseKeysInvalid);
+    m.sequences[1].end = 100; r.sequenceElapsedMs = 50; AgainstReference(m, r);
+    Require(SampleMdxNodePose(m, ReferenceRequest(r, 1)).value->chain.back().translation[0] == 5, "无关动作被逆序轨迹连带拒绝");
+    m.sequences[1].start = 500; m.sequences[1].end = 1000; AgainstReference(m, r);
+    m.globalSequences = {4000}; m.helpers[0].translation->globalSequence = 0; AgainstReference(m, r, Code::PoseKeysInvalid);
     m = model; m.helpers[0].translation->globalSequence = 0; AgainstReference(m, Request(), Code::PoseGlobalSequenceInvalid);
     m.globalSequences = {0}; m.helpers[0].translation->keys[0].value = {7, 8, 9};
     r = Request(); r.globalElapsedMs = UINT64_MAX; AgainstReference(m, r);

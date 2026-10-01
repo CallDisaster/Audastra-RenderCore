@@ -198,11 +198,10 @@ void TestHelperAndSkinningTopology() {
     auto linearBytes = Build(options); PatchAfterTag(linearBytes, "KGAO", 8, 1);
     const auto unbracketedAlpha = ParseMdx(linearBytes);
     Require(unbracketedAlpha.Succeeded() && unbracketedAlpha.value, "线性 KGAO 模型可解析");
-    // 原键为 (0, 0)/(2000, 1)；Stand 只有 0..1000，不能借用 Death 的键插值。
-    const auto rejectedAlpha = SampleMdxGeosetAlpha(*unbracketedAlpha.value, {1, 1, 500, 0});
-    Require(!rejectedAlpha.Succeeded() && !rejectedAlpha.value && !rejectedAlpha.diagnostics.empty()
-        && rejectedAlpha.diagnostics.front().code == "MDX_GEOA_BOUNDARY_UNSUPPORTED",
-        "线性 KGAO 缺少当前动作内的右侧关键帧时仍拒绝");
+    // 原键为 (0, 0)/(2000, 1)；Stand 只有 0..1000，按原版单键常量，不借 Death 键。
+    const auto constantAlpha = SampleMdxGeosetAlpha(*unbracketedAlpha.value, {1, 1, 500, 0});
+    Require(constantAlpha.Succeeded() && constantAlpha.value && *constantAlpha.value == 0,
+        "普通动作单键 KGAO 必须取当前动作的键值");
     // 第二键移到 Stand 末端：alpha = (t - 0) / (1000 - 0)，结果可精确表示。
     PatchAfterTag(linearBytes, "KGAO", 24, 1000);
     const auto linearAlpha = ParseMdx(linearBytes);
@@ -268,7 +267,7 @@ void TestParsedPoseChain() {
     Options options; options.animatedHelper = true;
     const auto parsed = ParseMdx(Build(options));
     Require(parsed.Succeeded(), "合成动画模型解析");
-const auto sampled = SampleMdxNodePose(*parsed.value, {1, 500, 0, 0, {}});
+    const auto sampled = SampleMdxNodePose(*parsed.value, {1, 500, 0, 0, {}});
     if (!sampled.Succeeded()) throw std::runtime_error("已解析节点姿态失败：" + sampled.diagnostics.front().message);
     Require(sampled.value->sequenceFrame == 500 && sampled.value->chain.size() == 2
         && sampled.value->chain[0].objectId == 1 && sampled.value->chain[1].objectId == 0,
@@ -407,7 +406,9 @@ void TestPosePreviewSemantics() {
         "MDX_POSE_CAMERA_INVALID");
     model = BuildPoseModel();
     model.helpers[0].translation->keys[0].frame = 1100;
-    PoseRejected(model, {0, 0, 500, 1, {}}, "MDX_POSE_BOUNDARY_UNSUPPORTED");
+    const auto seamPose = SampleMdxNodePose(model, {0, 0, 500, 1, {}});
+    Require(seamPose.Succeeded(), "普通动作首键前应按原版接缝取值");
+    Near(seamPose.value->chain.front().translation[0], 20, "首键前保留原首键的时间偏移");
 }
 
 void SkinRejected(const MdxModel& model, const MdxRigidSkinRequest& request, const std::string& code) {
@@ -483,6 +484,41 @@ void TestRigidSkinningPivotAndNormals() {
     SkinRejected(model, {0, 0, 500, 500, {}}, "MDX_SKIN_NORMAL_INVALID");
 }
 
+void TestCollisionMetadata() {
+    MdxTest::Writer w;
+    w.bytes = Build({.selectionGroup = 7, .selectionFlags = 4});
+    w.Tag("CLID"); const auto chunk = w.Begin();
+    for (std::uint32_t type = 0; type < 4; ++type) {
+        const auto node = w.Begin(); w.Fixed("Collision", 80);
+        w.U32(type + 1); w.U32(UINT32_MAX); w.U32(0x2000); w.EndInclusive(node);
+        w.U32(type);
+        for (std::uint32_t word = 0; word < (type == 2 ? 3u : 6u); ++word) w.F32(static_cast<float>(word + 1));
+        if (type == 2 || type == 3) w.F32(7);
+    }
+    w.EndChunk(chunk);
+    const auto parsed = ParseMdx(w.bytes);
+    Require(parsed.Succeeded() && parsed.value->collisionShapes.size() == 4, "CLID 保留旧四种边界");
+    Require(parsed.value->geosets[0].selectionGroup == 7 && parsed.value->geosets[1].selectionFlags == 4, "GEOS 选择原值");
+    for (std::uint32_t type = 0; type < 4; ++type) {
+        const auto& shape = parsed.value->collisionShapes[type];
+        Require(shape.sourceIndex == type && shape.sourceType == type && shape.nodeId == type + 1
+            && shape.vertices[0][2] == 3 && shape.rawWords[0] == 0x3f800000, "碰撞源顺序、节点和原始位");
+        Require(shape.support == (type == 0 || type == 2 ? MdxCollisionSupport::Supported : MdxCollisionSupport::LayoutAmbiguous)
+            && shape.payloadBytes == (type == 2 ? 16u : type == 3 ? 28u : 24u), "已证布局与歧义分开");
+    }
+    Require(parsed.value->collisionShapes[0].layout == MdxCollisionLayout::BoxVertices24
+        && parsed.value->collisionShapes[2].layout == MdxCollisionLayout::SphereCenterRadius16
+        && parsed.value->collisionShapes[2].radius == 7, "Box 与 Sphere 原字段");
+    auto nonfinite = w.bytes; const std::uint32_t rawNaN = 0x7fc01234;
+    std::memcpy(nonfinite.data() + chunk + 4 + 96 + 4, &rawNaN, 4);
+    const auto preserved = ParseMdx(nonfinite);
+    Require(preserved.Succeeded() && preserved.value->collisionShapes[0].support == MdxCollisionSupport::NonFinite
+        && preserved.value->collisionShapes[0].rawWords[0] == rawNaN, "非有限旧数据不丢弃或新增拒绝");
+    auto unknown = w.bytes; const std::uint32_t rawType = 4;
+    std::memcpy(unknown.data() + chunk + 4 + 96, &rawType, 4); Rejected(unknown, "MDX_COLLISION_TYPE_UNSUPPORTED");
+    w.bytes.pop_back(); Rejected(w.bytes, "MDX_TRUNCATED");
+}
+
 void TestModelFile() {
     Require(MdxModelFile("Doodads\\Terrain\\LordaeronTree\\LordaeronTree", 3, 10) == "Doodads\\Terrain\\LordaeronTree\\LordaeronTree3.mdx",
         "多变体追加编号");
@@ -504,6 +540,7 @@ int main() {
         TestPosePreviewSemantics();
         TestParsedRigidSkinning();
         TestRigidSkinningPivotAndNormals();
+        TestCollisionMetadata();
         TestModelFile();
         std::cout << "MdxModelTests: all tests passed\n";
         return 0;

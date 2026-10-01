@@ -54,6 +54,8 @@ std::array<float,N> Sample(const GeoChannel<N>& channel,const Sequence& sequence
     const auto begin=channel.global ? channel.keys.begin() : std::lower_bound(channel.keys.begin(),channel.keys.end(),start,[](const auto& k,auto t) { return k.frame<t; });
     const auto stop=channel.global ? channel.keys.end() : std::upper_bound(begin,channel.keys.end(),end,[](auto t,const auto& k) { return t<k.frame; });
     if (begin==stop) return channel.fallback;
+    // 1.27a 789EB0/77AA80/77AAA0：当前动作只有一键时直接取值，即使尚未到该帧。
+    if (!channel.global && stop-begin==1) return begin->value;
     const auto right=std::upper_bound(begin,stop,time,[](auto t,const auto& k) { return t<k.frame; });
     if (right==begin) { e.Fail(Code::GeoaBoundaryUnsupported);return {}; }
     const auto& left=*(right-1);
@@ -96,6 +98,28 @@ bool EvaluateGeosets(const ModelData& model,const Sequence& sequence,std::uint32
         if (!e.Good()) return false;
         colors[i]=Sample(model.colorTracks[i],sequence,frame,global,e);
         if (!e.Good()) return false;
+    }
+    return true;
+}
+bool EvaluateGeosets(const ModelData& model,const Sequence& sequence,std::uint32_t frame,std::uint64_t global,
+    std::span<float> alphas,std::span<Vec3> colors,Evaluation& e,
+    std::span<GeosetIssue> issues,std::uint32_t& issueCount) noexcept {
+    issueCount=0;
+    if (alphas.size()!=model.alphas.size() || colors.size()!=model.colorTracks.size() ||
+        model.alphas.size()!=model.colorTracks.size()) { e.Fail(Code::OutputRangeInvalid);return false; }
+    if (issues.size()<model.alphas.size()) { e.Fail(Code::CapacityExceeded);return false; }
+    for (std::size_t i=0;i<model.alphas.size();++i) {
+        Evaluation local{};
+        alphas[i]=Sample(model.alphas[i],sequence,frame,global,local)[0];
+        if (local.Good()) colors[i]=Sample(model.colorTracks[i],sequence,frame,global,local);
+        if (local.Good()) continue;
+        // 只隔离已界定 GEOA 的四类内容；结构、引用、节点及资源预算不进入此白名单。
+        if (local.error!=Code::GeoaUninterpreted && local.error!=Code::GeoaColorInvalid &&
+            local.error!=Code::GeoaKeysInvalid && local.error!=Code::GeoaBoundaryUnsupported) {
+            e.Fail(local.error);return false;
+        }
+        issues[issueCount++]={static_cast<std::uint32_t>(i),{local.error,Severity::Error,NoIndex,TrackKind::None,0,0}};
+        alphas[i]=0; colors[i]={0,0,0}; // 明确不显示；不是未知颜色的成功值。
     }
     return true;
 }

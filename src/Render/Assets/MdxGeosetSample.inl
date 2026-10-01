@@ -31,6 +31,7 @@ Result<std::array<float,N>> SampleGeoReference(const MdxModel& model, const MdxG
     const bool singleGlobal = global != UINT32_MAX && keys.size() == 1;
     using Key = typename Keys::value_type;
     const Key* left = nullptr; const Key* right = nullptr;
+    const Key* soleKey = nullptr; std::size_t spanCount = 0;
     bool first = true, hasKeys = false; std::uint32_t previous = 0;
     for (const auto& key : keys) {
         // 保留先数值、后帧序校验次序；编译侧采用同一错误优先级，不共用结果。
@@ -46,13 +47,17 @@ Result<std::array<float,N>> SampleGeoReference(const MdxModel& model, const MdxG
             return reject("MDX_GEOA_GLOBAL_SPAN_UNSUPPORTED");
         if (singleGlobal) { left=&key;hasKeys=true;continue; }
         if (global == UINT32_MAX && (key.frame<start || key.frame>end)) continue;
+        soleKey=&key; ++spanCount;
         hasKeys=true;
         if (key.frame<=time) left=&key; else if (!right) right=&key;
     }
     if (!hasKeys) return Out::Success(fallback);
+    // 独立按源键扫描动作区间，普通单键与原版未抑制更新路径一样为常量。
+    const bool singleSequence = global == UINT32_MAX && spanCount == 1;
+    if (singleSequence) left=soleKey;
     if (!left) return reject("MDX_GEOA_BOUNDARY_UNSUPPORTED");
     std::array<float,N> result{};
-    if (singleGlobal || mode==0 || left->frame==time) {
+    if (singleGlobal || singleSequence || mode==0 || left->frame==time) {
         for (std::size_t c=0;c<N;++c) result[c]=GeoComponent(left->value,c);
         return Out::Success(result);
     }

@@ -4,6 +4,7 @@
 #pragma once
 #include "War3MapCore/Render/MdxModel.h"
 #include "MdxReadInternal.h"
+#include <bit>
 
 // 二进制边界参考 GhostWolf 的 MDX Specifications（Node 与各类对象大小），不是移植实现：
 // https://www.hiveworkshop.com/threads/mdx-specifications.240487/
@@ -149,8 +150,40 @@ inline void ParseCollisions(Reader reader, MdxModel& model, const MdxLimits& lim
         node.kind = MdxNodeKind::Collision;
         const auto type = reader.U32("碰撞形状类型");
         if (type > 3) Fail("MDX_COLLISION_TYPE_UNSUPPORTED", "无法确定未知碰撞形状的字节边界。");
-        reader.Skip(type == 2 ? 12 : 24, "碰撞形状顶点");
-        if (type == 2 || type == 3) reader.Skip(4, "碰撞形状半径");
+        MdxCollisionShape shape;
+        shape.sourceIndex = static_cast<std::uint32_t>(model.collisionShapes.size());
+        shape.sourceType = type;
+        shape.nodeId = node.objectId;
+        shape.vertexCount = type == 2 ? 1u : 2u;
+        shape.hasRadius = type == 2 || type == 3;
+        shape.payloadBytes = shape.vertexCount * 12 + (shape.hasRadius ? 4u : 0u);
+        switch (type) {
+        case 0: shape.layout = MdxCollisionLayout::BoxVertices24; break;
+        case 1: shape.layout = MdxCollisionLayout::UnverifiedType1Vertices24; break;
+        case 2: shape.layout = MdxCollisionLayout::SphereCenterRadius16; break;
+        case 3: shape.layout = MdxCollisionLayout::UnverifiedType3VerticesRadius28; break;
+        }
+        // 保持旧 Skip 的边界/接受范围；F32 会新增非有限值拒绝，因此读取原始位并单独标记。
+        reader.Need(shape.vertexCount * 12, "碰撞形状顶点");
+        bool finite = true;
+        for (std::uint32_t vertex = 0; vertex < shape.vertexCount; ++vertex) {
+            for (std::uint32_t axis = 0; axis < 3; ++axis) {
+                const auto raw = reader.U32("碰撞形状顶点");
+                shape.rawWords[vertex * 3 + axis] = raw;
+                shape.vertices[vertex][axis] = std::bit_cast<float>(raw);
+                finite = finite && std::isfinite(shape.vertices[vertex][axis]);
+            }
+        }
+        if (shape.hasRadius) {
+            const auto raw = reader.U32("碰撞形状半径");
+            shape.rawWords[shape.vertexCount * 3] = raw;
+            shape.radius = std::bit_cast<float>(raw);
+            finite = finite && std::isfinite(shape.radius);
+        }
+        if (!finite) shape.support = MdxCollisionSupport::NonFinite;
+        else if (type == 2 && shape.radius < 0) shape.support = MdxCollisionSupport::InvalidRadius;
+        else if (type == 0 || type == 2) shape.support = MdxCollisionSupport::Supported;
+        model.collisionShapes.push_back(std::move(shape));
         model.otherNodes.push_back(std::move(node));
     }
 }
