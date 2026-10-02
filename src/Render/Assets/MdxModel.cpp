@@ -87,8 +87,8 @@ void ParseTextures(Reader reader, MdxModel& model, const MdxLimits& limits) {
     }
 }
 
-void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits) {
-    std::size_t retainedAlphaKeys = 0;
+void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits,
+    std::size_t& retainedAlphaKeys, std::size_t& retainedTextureBytes) {
     while (reader.Remaining() != 0) {
         const auto materialStart = reader.Position();
         const auto materialBytes = reader.U32("材质大小");
@@ -110,18 +110,63 @@ void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits) {
             if (filter > static_cast<std::uint32_t>(MdxFilterMode::Modulate2x)) Fail("MDX_VALUE_INVALID", "未知的层过滤模式。");
             layer.filterMode = static_cast<MdxFilterMode>(filter);
             layer.shadingFlags = reader.U32("着色标志");
+            layer.staticTextureIdByteOffset = reader.Position();
             layer.textureId = reader.U32("层贴图 ID");
             layer.textureAnimationId = reader.U32("贴图动画 ID");
             layer.coordId = reader.U32("UV 组");
             layer.staticAlphaByteOffset = reader.Position();
             layer.alpha = reader.F32("层透明度");
-            // KMTA原键/物理来源保留；其它已知轨迹仍按旧规则标记跳过。
+            // KMTA/KMTF原键与物理来源保留；旧默认求值不会误启新渠道。
             while (reader.Position() + 16 <= layerStart + layerBytes) {
                 const auto tag = reader.PeekTag();
                 const auto valueBytes = TrackValueBytes(tag);
                 if (valueBytes == 0) break;
                 const auto trackOffset = reader.Position();
                 reader.Tag("层轨迹");
+                if (tag == "KMTF") {
+                    auto track = reader.Until(layerStart + layerBytes, "KMTF层边界");
+                    const auto count = track.U32("KMTF按键数量");
+                    const auto interpolation = track.U32("KMTF插值类型");
+                    const auto globalSequence = track.U32("KMTF全局序列");
+                    const std::size_t keyBytes = interpolation > 1 ? 16u : 8u;
+                    if (count > limits.maxTrackKeys) Fail("MDX_LIMIT", "KMTF按键数量超过轨迹预算。");
+                    if (static_cast<std::uint64_t>(count) * keyBytes > track.Remaining())
+                        Fail("MDX_SIZE_INVALID", "KMTF按键字节越过材质层边界。");
+                    {
+                        auto duplicateCapacity = layer.duplicateTextureTracks.capacity();
+                        if (layer.animatedTexture && layer.duplicateTextureTracks.size() == duplicateCapacity)
+                            duplicateCapacity = duplicateCapacity ? duplicateCapacity * 2 : 1;
+                        const auto bytes = static_cast<std::uint64_t>(count) * sizeof(MdxMaterialTextureKey)
+                            + (duplicateCapacity - layer.duplicateTextureTracks.capacity()) * sizeof(MdxMaterialTextureTrack);
+                        const auto alphaBytes = static_cast<std::uint64_t>(retainedAlphaKeys) * sizeof(MdxMaterialAlphaKey);
+                        if (alphaBytes > limits.maxInputBytes || retainedTextureBytes > limits.maxInputBytes - alphaBytes
+                            || bytes > limits.maxInputBytes - alphaBytes - retainedTextureBytes)
+                            Fail("MDX_LIMIT", "拥有的材质原键累计超过输入字节预算。");
+                        retainedTextureBytes += static_cast<std::size_t>(bytes);
+                        MdxMaterialTextureTrack duplicate;
+                        auto* keys = &layer.textureKeys;
+                        if (layer.animatedTexture) {
+                            layer.duplicateTextureTracks.reserve(duplicateCapacity);
+                            if (!layer.duplicateTextureByteOffset) layer.duplicateTextureByteOffset = trackOffset;
+                            duplicate.interpolation = interpolation; duplicate.globalSequence = globalSequence;
+                            duplicate.sourceByteOffset = trackOffset; keys = &duplicate.keys;
+                        } else {
+                            layer.animatedTexture = true; layer.textureSourceByteOffset = trackOffset;
+                            layer.textureInterpolation = interpolation; layer.textureGlobalSequence = globalSequence;
+                        }
+                        keys->reserve(count);
+                        for (std::uint32_t keyIndex = 0; keyIndex < count; ++keyIndex) {
+                            MdxMaterialTextureKey key; key.sourceByteOffset = track.Position();
+                            key.frame = track.U32("KMTF帧"); key.textureId = track.U32("KMTF贴图ID");
+                            if (interpolation > 1) {
+                                key.inTangentBits = track.U32("KMTF入切线原位"); key.outTangentBits = track.U32("KMTF出切线原位");
+                            }
+                            keys->push_back(key);
+                        }
+                        if (keys == &duplicate.keys) layer.duplicateTextureTracks.push_back(std::move(duplicate));
+                    }
+                    reader.Skip(track.Position() - reader.Position(), "KMTF已验证字节"); continue;
+                }
                 if (tag == "KMTA" && !layer.animatedAlpha) {
                     layer.animatedAlpha = true; layer.alphaSourceByteOffset = trackOffset;
                     auto track = reader.Until(layerStart + layerBytes, "KMTA层边界");
@@ -135,6 +180,9 @@ void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits) {
                     const auto retainedLimit = limits.maxInputBytes / sizeof(MdxMaterialAlphaKey);
                     if (retainedAlphaKeys > retainedLimit || count > retainedLimit - retainedAlphaKeys)
                         Fail("MDX_LIMIT", "KMTA拥有的原始键累计超过输入字节预算。");
+                    const auto alphaBytes = (static_cast<std::uint64_t>(retainedAlphaKeys) + count) * sizeof(MdxMaterialAlphaKey);
+                    if (retainedTextureBytes > limits.maxInputBytes - alphaBytes)
+                        Fail("MDX_LIMIT", "拥有的材质原键累计超过输入字节预算。");
                     retainedAlphaKeys += count; layer.alphaKeys.reserve(count);
                     for (std::uint32_t keyIndex = 0; keyIndex < count; ++keyIndex) {
                         MdxMaterialAlphaKey key; key.sourceByteOffset = track.Position();
@@ -419,6 +467,7 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
         std::vector<GeosetAnimation> animations;
         std::size_t totalVertices = 0, totalIndices = 0, totalBoneKeys = 0;
         bool seenPivots = false;
+        std::size_t retainedMaterialAlphaKeys = 0, retainedMaterialTextureBytes = 0;
         while (file.Remaining() != 0) {
             const auto tag = file.Tag("块标记");
             const auto size = file.U32("块大小");
@@ -446,7 +495,7 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
             } else if (tag == "TEXS") {
                 ParseTextures(chunk, model, limits);
             } else if (tag == "MTLS") {
-                ParseMaterials(chunk, model, limits);
+                ParseMaterials(chunk, model, limits, retainedMaterialAlphaKeys, retainedMaterialTextureBytes);
             } else if (tag == "GEOS") {
                 if (model.version != kClassicVersion) Fail("MDX_VERSION_UNSUPPORTED", "GEOS 之前缺少版本 800 的 VERS 块。");
                 ParseGeosets(chunk, model, limits, totalVertices, totalIndices, rigidOrigins);
@@ -652,6 +701,77 @@ Result<std::vector<float>> SampleMdxLayerAlphas(const MdxModel& model, const Mdx
     } catch (const std::length_error&) {
         return Out::Failure("Mdx.MaterialAlpha", "MDX_ALLOCATION", "材质参考输出容量无效。");
     }
+}
+
+Result<std::vector<std::uint32_t>> SampleMdxLayerTextureIds(const MdxModel& model, const MdxGeosetAlphaRequest& request) {
+    using Out = Result<std::vector<std::uint32_t>>;
+    const auto reject = [](const char* code, std::uint64_t offset = 0, std::uint32_t value = 0) {
+        auto result = Out::Failure("Mdx.MaterialTextures", code,
+            "KMTF None(0)有界整数阶梯GenericPreview无法确定；源uint32=" + std::to_string(value) + "。");
+        result.diagnostics[0].origin = OriginSpan{{}, offset, 4, {}}; return result;
+    };
+    if (request.sequenceIndex >= model.sequences.size() || !model.sequences[request.sequenceIndex].Usable())
+        return reject("MDX_POSE_SEQUENCE_INVALID");
+    const MdxLimits hard;
+    if (model.materials.size() > hard.maxMaterials || model.textures.size() > hard.maxTextures
+        || model.globalSequences.size() > hard.maxGlobalSequences) return reject("MDX_MATERIAL_TEXTURE_LIMIT");
+    const auto& sequence = model.sequences[request.sequenceIndex];
+    const auto duration = static_cast<std::uint64_t>(sequence.end) - sequence.start;
+    const auto sequenceTime = sequence.start + (sequence.flags == 0 && duration
+        ? request.sequenceElapsedMs % duration : std::min(request.sequenceElapsedMs, duration));
+    try {
+        std::vector<std::uint32_t> output;
+        for (const auto& material : model.materials) {
+            if (material.layers.size() > hard.maxLayersPerMaterial) return reject("MDX_MATERIAL_TEXTURE_LIMIT");
+            for (const auto& layer : material.layers) {
+                const auto offset = layer.animatedTexture ? layer.textureSourceByteOffset : layer.staticTextureIdByteOffset;
+                if (layer.textureKeys.size() > hard.maxTrackKeys) return reject("MDX_MATERIAL_TEXTURE_LIMIT");
+                if (material.hasUninterpretedData || layer.hasUninterpretedData)
+                    return reject("MDX_MATERIAL_TEXTURE_UNINTERPRETED", offset);
+                if (layer.duplicateTextureByteOffset || !layer.duplicateTextureTracks.empty())
+                    return reject("MDX_MATERIAL_TEXTURE_UNINTERPRETED", layer.duplicateTextureByteOffset
+                        ? layer.duplicateTextureByteOffset : layer.duplicateTextureTracks.front().sourceByteOffset);
+                if (layer.textureAnimationId != UINT32_MAX || layer.coordId != 0)
+                    return reject("MDX_MATERIAL_TEXTURE_UNINTERPRETED", layer.staticTextureIdByteOffset
+                        + (layer.textureAnimationId != UINT32_MAX ? 4 : 8),
+                        layer.textureAnimationId != UINT32_MAX ? layer.textureAnimationId : layer.coordId);
+                if (layer.textureId >= model.textures.size())
+                    return reject("MDX_MATERIAL_TEXTURE_REFERENCE_INVALID", layer.staticTextureIdByteOffset, layer.textureId);
+                if (!layer.animatedTexture) {
+                    if (!layer.textureKeys.empty()) return reject("MDX_MATERIAL_TEXTURE_UNINTERPRETED", offset);
+                    output.push_back(layer.textureId); continue;
+                }
+                if (layer.textureInterpolation != 0)
+                    return reject("MDX_MATERIAL_TEXTURE_INTERPOLATION_UNSUPPORTED", offset + 8, layer.textureInterpolation);
+                const bool global = layer.textureGlobalSequence != UINT32_MAX;
+                if (global && layer.textureGlobalSequence >= model.globalSequences.size())
+                    return reject("MDX_MATERIAL_TEXTURE_GLOBAL_SEQUENCE_UNSUPPORTED", offset + 12, layer.textureGlobalSequence);
+                // 与编译侧独立：直接在原键坐标上按源顺序扫描，不调用核心或其归零键表。
+                std::uint64_t time = sequenceTime;
+                if (global) {
+                    const auto period = model.globalSequences[layer.textureGlobalSequence];
+                    time = period ? request.globalElapsedMs % period : 0;
+                    if (!layer.textureKeys.empty()) time += layer.textureKeys.front().frame;
+                }
+                auto selected = layer.textureId;
+                bool first = true; std::uint32_t previous = 0;
+                for (const auto& key : layer.textureKeys) {
+                    if (!first && key.frame <= previous)
+                        return reject("MDX_MATERIAL_TEXTURE_KEYS_INVALID", key.sourceByteOffset, key.frame);
+                    if (key.textureId >= model.textures.size())
+                        return reject("MDX_MATERIAL_TEXTURE_REFERENCE_INVALID", key.sourceByteOffset + 4, key.textureId);
+                    if (global && static_cast<std::uint64_t>(key.frame) - layer.textureKeys.front().frame > INT32_MAX)
+                        return reject("MDX_MATERIAL_TEXTURE_GLOBAL_SPAN_UNSUPPORTED", key.sourceByteOffset, key.frame);
+                    first = false; previous = key.frame;
+                    if (!global && (key.frame < sequence.start || key.frame > sequence.end)) continue;
+                    if (key.frame <= time) selected = key.textureId;
+                }
+                output.push_back(selected);
+            }
+        }
+        return Out::Success(std::move(output));
+    } catch (const std::bad_alloc&) { return reject("RENDER_CORE_ALLOCATION_FAILED"); }
+    catch (const std::length_error&) { return reject("RENDER_CORE_ALLOCATION_FAILED"); }
 }
 
 std::string MdxModelFile(std::string_view modelField, std::uint32_t variation, std::uint32_t variationCount) {

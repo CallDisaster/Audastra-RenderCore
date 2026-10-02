@@ -83,6 +83,13 @@ DiagnosticText Text(Code code) noexcept {
     case Code::MaterialAlphaBoundaryUnsupported: return {"MDX_MATERIAL_ALPHA_BOUNDARY_UNSUPPORTED", "KMTA采样边界尚不支持，不补默认透明度。"};
     case Code::MaterialAlphaGlobalSpanUnsupported: return {"MDX_MATERIAL_ALPHA_GLOBAL_SPAN_UNSUPPORTED", "KMTA归零帧跨度超过已界定有符号范围。"};
     case Code::MaterialAlphaLimit: return {"MDX_MATERIAL_ALPHA_LIMIT", "KMTA轨迹或层数量超过有界预算。"};
+    case Code::MaterialTextureUninterpreted: return {"MDX_MATERIAL_TEXTURE_UNINTERPRETED", "KMTF层含重复轨迹、未知尾部、TXAN或未支持的UV组；不回退静态成功。"};
+    case Code::MaterialTextureInterpolationUnsupported: return {"MDX_MATERIAL_TEXTURE_INTERPOLATION_UNSUPPORTED", "KMTF仅启用None(0)整数阶梯预览；不对贴图ID做浮点插值。"};
+    case Code::MaterialTextureGlobalSequenceUnsupported: return {"MDX_MATERIAL_TEXTURE_GLOBAL_SEQUENCE_UNSUPPORTED", "KMTF全局序列引用不存在。"};
+    case Code::MaterialTextureKeysInvalid: return {"MDX_MATERIAL_TEXTURE_KEYS_INVALID", "KMTF键未严格递增；不排序或删键。"};
+    case Code::MaterialTextureReferenceInvalid: return {"MDX_MATERIAL_TEXTURE_REFERENCE_INVALID", "KMTF静态或按键贴图ID越过真实TEXS表。"};
+    case Code::MaterialTextureGlobalSpanUnsupported: return {"MDX_MATERIAL_TEXTURE_GLOBAL_SPAN_UNSUPPORTED", "KMTF归零全局键跨度超过已界定有符号范围。"};
+    case Code::MaterialTextureLimit: return {"MDX_MATERIAL_TEXTURE_LIMIT", "KMTF拥有轨迹/可达贴图/布局超过有界预算。"};
     }
     return {"RENDER_CORE_UNKNOWN_DIAGNOSTIC", "未知诊断编号。"};
 }

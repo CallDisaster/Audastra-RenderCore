@@ -59,18 +59,31 @@ struct MdxMaterialAlphaKey {
     float value = 1.0f, inTangent = 0.0f, outTangent = 0.0f;
     std::uint64_t sourceByteOffset = 0; // 原frame字段位置；value为+4，切线为+8/+12。
 };
+struct MdxMaterialTextureKey {
+    std::uint32_t frame = 0, textureId = 0, inTangentBits = 0, outTangentBits = 0;
+    std::uint64_t sourceByteOffset = 0; // 原frame位置；贴图ID为+4，不经过float转换。
+};
+struct MdxMaterialTextureTrack {
+    std::uint32_t interpolation = 0, globalSequence = UINT32_MAX;
+    std::uint64_t sourceByteOffset = 0;
+    std::vector<MdxMaterialTextureKey> keys;
+};
 struct MdxLayer {
     MdxFilterMode filterMode = MdxFilterMode::None;
     std::uint32_t shadingFlags = 0; // 0x1 无光照、0x10 双面、0x40 不测深度、0x80 不写深度
     std::uint32_t textureId = 0;
     float alpha = 1.0f;             // 没有KMTA时的真实静态值；不预乘GEOA。
-    bool animatedTexture = false;   // 有贴图 ID 轨迹（KMTF）时为真，仍取静态 textureId
+    bool animatedTexture = false;   // 显式纹理渠道才消费KMTF；旧默认仍取静态textureId。
     bool animatedAlpha = false;
     std::uint32_t textureAnimationId = UINT32_MAX, coordId = 0;
     bool hasUninterpretedData = false; // 元数据仅供严格粒子材质门禁；不改变现有网格绘制。
     std::uint32_t alphaInterpolation = 0, alphaGlobalSequence = UINT32_MAX;
     std::uint64_t alphaSourceByteOffset = 0, staticAlphaByteOffset = 0;
     std::vector<MdxMaterialAlphaKey> alphaKeys;
+    std::uint32_t textureInterpolation = 0, textureGlobalSequence = UINT32_MAX;
+    std::uint64_t textureSourceByteOffset = 0, staticTextureIdByteOffset = 0, duplicateTextureByteOffset = 0;
+    std::vector<MdxMaterialTextureKey> textureKeys;
+    std::vector<MdxMaterialTextureTrack> duplicateTextureTracks; // 原轨迹完整保留；新渠道拒绝冲突。
 };
 
 struct MdxMaterial {
@@ -298,6 +311,9 @@ struct MdxGeosetAlphaRequest {
 // 独立原始键参考；按material/layer唯一顺序，request.geosetIndex不使用。
 // 不调用RenderCore，不声称与原版逐帧等价；未知/坏层不回退static成功。
 [[nodiscard]] Result<std::vector<float>> SampleMdxLayerAlphas(
+    const MdxModel& model, const MdxGeosetAlphaRequest& request);
+// KMTF整数None(0)离散通用预览参考；不是原版选键等价证明。
+[[nodiscard]] Result<std::vector<std::uint32_t>> SampleMdxLayerTextureIds(
     const MdxModel& model, const MdxGeosetAlphaRequest& request);
 
 // GEOA RGB 乘数。flags=0 返回白色；0x2 使用静态色或 KGAC；未知位/尾部明确拒绝。

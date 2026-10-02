@@ -5,12 +5,13 @@
 
 #include "War3RenderCore/CompiledModel.h"
 #include "War3RenderCore/ExternalFrame.h"
+#include "War3RenderCore/MaterialTextures.h"
 
 #include <memory>
 #include <span>
 
 namespace War3RenderCore {
-namespace Detail { struct BatchData; struct ExternalBatchData; struct GeosetPreviewData; struct MaterialBatchData; }
+namespace Detail { struct BatchData; struct ExternalBatchData; struct GeosetPreviewData; struct MaterialBatchData; struct TextureBatchData; }
 
 enum class GeosetFailurePolicy : std::uint32_t { Strict = 0, PreviewHideInvalidGeosets = 1 };
 struct GeosetIssue {
@@ -39,6 +40,10 @@ public:
     [[nodiscard]] static War3Map::Result<PoseBatchEvaluator> Create(
         std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
         GeosetFailurePolicy policy, MaterialChannelOptions materials);
+    [[nodiscard]] static War3Map::Result<PoseBatchEvaluator> Create(
+        std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
+        GeosetFailurePolicy policy, MaterialChannelOptions materials, TextureChannelOptions textures,
+        std::span<const CompiledMaterialTextures> textureAssets);
 
     // 专用模式：预热新回执且计入预算，不改变旧 Create 的存储估计或预算边界。
     // 两个模式不能互调 Evaluate；误用仍使前次输出失效。
@@ -73,6 +78,10 @@ public:
     [[nodiscard]] std::span<const float> LayerAlphas(std::uint32_t instanceIndex) const noexcept;
     // 每实例最多首个严格材质错误；物理来源不伪装成node objectId。
     [[nodiscard]] std::span<const MaterialLayerIssue> MaterialIssues(std::uint32_t instanceIndex) const noexcept;
+    [[nodiscard]] bool TextureChannelsEnabled() const noexcept;
+    // 绝对TEXS ID，不经float；唯一material/layer序，沿同一PoseReceipt，失败为空。
+    [[nodiscard]] std::span<const std::uint32_t> LayerTextureIds(std::uint32_t instanceIndex) const noexcept;
+    [[nodiscard]] std::span<const MaterialLayerIssue> TextureIssues(std::uint32_t instanceIndex) const noexcept;
     [[nodiscard]] std::span<const PoseDiagnostic> Diagnostics(std::uint32_t instanceIndex) const noexcept;
     // 与对应姿势相同的借用期；严格模式/整实例失败为空，非空表示局部预览。
     [[nodiscard]] std::span<const GeosetIssue> GeosetIssues(std::uint32_t instanceIndex) const noexcept;
@@ -85,6 +94,7 @@ private:
     // 独立预分配，仅显式容错模式使用；不改变严格 Create 或外部帧预算。
     std::unique_ptr<Detail::GeosetPreviewData> preview_;
     std::unique_ptr<Detail::MaterialBatchData> materials_;
+    std::unique_ptr<Detail::TextureBatchData> textures_;
 };
 
 } // namespace War3RenderCore

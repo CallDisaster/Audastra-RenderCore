@@ -102,6 +102,40 @@ int main() {
         fixture.instances[1].instance.model = 1; fixture.instances[1].firstGroup = fixture.instances[1].firstAlpha = 1;
         Check(!CopySkinUpdate(material.base.base, materialShared, pose));
         fixture.instances[1].instance.model = 0; fixture.instances[1].firstGroup = fixture.instances[1].firstAlpha = 1;
+        RenderSkinFixture stateFixture; War3RenderMaterialStateSkinUpdateV2 states{};
+        states.base.base.base = stateFixture.Update(); states.base.base.base.structSize = sizeof(states);
+        states.base.layerAlphaFormat = WAR3_RENDER_DYNAMIC_LAYER_ALPHA_V1; states.base.layerAlphaCount = 2;
+        states.base.instanceSliceCount = 2; states.base.layerAlphas = layerAlphas; states.base.instanceSlices = layerSlices;
+        War3RenderMaterialStateV2 stateValues[]{{0,0,{1,0,0,0,1,0}}, {1,3,{0,.5f,.125f,.25f,0,.625f}}};
+        War3RenderMaterialLayerSliceV2 stateSlices[]{{0,1},{1,1}}; layerSlices[0] = {0,1}; layerSlices[1] = {1,1};
+        states.materialStateFormat = WAR3_RENDER_DYNAMIC_MATERIAL_STATE_V1; states.materialStateCount = states.materialInstanceSliceCount = 2;
+        states.materialStates = stateValues; states.materialInstanceSlices = stateSlices;
+        auto stateDescription = stateFixture.Scene(states.base.base.base); stateDescription.textureCount = 2;
+        ModelScene stateScene; Check(CopySkinnedModelInput(stateDescription, stateScene, bytes));
+        Check(stateScene.dynamicMaterialStates && stateScene.initialSkin->materialStates[1].textureIndex == 1);
+        stateValues[1].textureIndex = 0; ++states.base.base.base.contentVersion;
+        Check(stateScene.initialSkin->materialStates[1].textureIndex == 1 && CopySkinUpdate(states.base.base.base, stateScene, pose)
+            && pose.materialStates[1].textureIndex == 0);
+        const auto rejectState = [&] { SkinPose temporary; Check(!CopySkinUpdate(states.base.base.base, stateScene, temporary)); };
+        stateValues[1].textureIndex = 2; rejectState(); stateValues[1].textureIndex = WAR3_RENDER_MODEL_NO_TEXTURE;
+        Check(CopySkinUpdate(states.base.base.base, stateScene, pose)); stateValues[1].textureIndex = 1;
+        stateValues[1].samplerFlags = 4; rejectState(); stateValues[1].samplerFlags = 3;
+        stateValues[1].uvTransform[1] = std::numeric_limits<float>::quiet_NaN(); rejectState(); stateValues[1].uvTransform[1] = .5f;
+        stateSlices[1].first = 0; rejectState(); stateSlices[1].first = 1;
+        states.materialInstanceSliceCount = 1; rejectState(); states.materialInstanceSliceCount = 2;
+        states.materialStates = nullptr; rejectState(); states.materialStates = stateValues;
+        states.reserved = 1; rejectState(); states.reserved = 0;
+        auto shortState = states.base; shortState.base.base.structSize = sizeof(shortState);
+        Check(!CopySkinUpdate(shortState.base.base, stateScene, pose)); // 没有尾部不能继续旧静态贴图。
+        states.base.base.base.sceneVersion = 2; ModelScene stateRoster;
+        Check(CopySkinRoster(states.base.base.base, stateScene, stateRoster) && stateRoster.dynamicMaterialStates);
+        states.base.base.base.matrixFormat = WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4_SHARED_RANGES;
+        stateFixture.instances[1].firstGroup = stateFixture.instances[1].firstAlpha = 0;
+        states.base.instanceSlices = layerSlices; layerSlices[1].first = 0; stateSlices[1].first = 0;
+        ModelScene stateShared; Check(CopySkinnedModelInput(stateDescription, stateShared, bytes));
+        stateShared.initialSkin.reset(); stateShared.models.push_back(stateShared.models[0]); stateShared.modelGroupCounts.push_back(1);
+        stateShared.modelLayerCounts.push_back(1); stateFixture.instances[1].instance.model = 1;
+        Check(!CopySkinUpdate(states.base.base.base, stateShared, pose)); // 不允许跨模型别名。
         static_assert(offsetof(War3RenderPluginApiV2,submitSkinnedModelScene)
             == offsetof(War3RenderPluginApiV2,setOverlayLines) + sizeof(War3RenderPluginApiV2::setOverlayLines));
         // 0.1.0 的 28 个函数指针前缀尺寸在 x64/Win32 均保持不变。

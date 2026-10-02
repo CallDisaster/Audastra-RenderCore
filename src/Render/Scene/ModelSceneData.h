@@ -4,6 +4,7 @@
 #pragma once
 #include "War3MapCore/RenderPluginModelColor.h"
 #include "War3MapCore/RenderPluginMaterialAlpha.h"
+#include "War3MapCore/RenderPluginMaterialState.h"
 #include <memory>
 #include <utility>
 #include <vector>
@@ -27,6 +28,9 @@ struct SkinPose {
     std::vector<float> layerAlphas;
     std::vector<War3RenderMaterialLayerSliceV2> layerSlices;
     bool dynamicMaterialAlphas = false; // 空roster仍保留格式；不是根据vector是否空推导。
+    std::vector<War3RenderMaterialStateV2> materialStates;
+    std::vector<War3RenderMaterialLayerSliceV2> materialStateSlices;
+    bool dynamicMaterialStates = false;
 };
 struct ModelStaticSuffix {
     std::vector<War3RenderModelVertexV2> vertices;
@@ -58,6 +62,8 @@ struct ModelScene {
     std::uint32_t prefixLayers = 0, prefixMeshes = 0, prefixModels = 0;
     bool dynamicColors = false; // 由请求格式绑定，空roster也不能丢掉动态颜色模式。
     bool dynamicMaterialAlphas = false;
+    bool dynamicMaterialStates = false;
+    std::uint32_t materialStateTextureCount = 0; // CPU初始候选纹理尚未读入时绑定已验证声明数量。
     const auto& StaticVertices() const noexcept { return staticSuffix ? staticSuffix->vertices : vertices; }
     const auto& StaticIndices() const noexcept { return staticSuffix ? staticSuffix->indices : indices; }
     const auto& StaticVertexGroups() const noexcept { return staticSuffix ? staticSuffix->vertexGroups : vertexGroups; }

@@ -147,9 +147,12 @@ enum class Code : std::uint32_t {
     MaterialAlphaUninterpreted, MaterialAlphaNumberInvalid, MaterialAlphaInterpolationUnsupported,
     MaterialAlphaGlobalSequenceUnsupported, MaterialAlphaKeysInvalid, MaterialAlphaBoundaryUnsupported,
     MaterialAlphaGlobalSpanUnsupported, MaterialAlphaLimit,
+    MaterialTextureUninterpreted, MaterialTextureInterpolationUnsupported,
+    MaterialTextureGlobalSequenceUnsupported, MaterialTextureKeysInvalid,
+    MaterialTextureReferenceInvalid, MaterialTextureGlobalSpanUnsupported, MaterialTextureLimit,
 };
 enum class Severity : std::uint32_t { Warning = 0, Error = 1 };
-enum class TrackKind : std::uint32_t { None = 0, Translation = 1, Rotation = 2, Scale = 3, MaterialAlpha = 4 };
+enum class TrackKind : std::uint32_t { None = 0, Translation = 1, Rotation = 2, Scale = 3, MaterialAlpha = 4, MaterialTexture = 5 };
 struct alignas(8) PoseDiagnostic {
     Code code = Code::Ok;
     Severity severity = Severity::Error;
