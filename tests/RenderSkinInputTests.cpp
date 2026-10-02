@@ -116,7 +116,10 @@ int main() {
             == offsetof(War3RenderPluginApiV2, captureLayeredFrameRgba) + sizeof(War3RenderPluginApiV2::captureLayeredFrameRgba));
         static_assert(offsetof(War3RenderPluginApiV2, getFrameMetrics) == 8 + 34 * sizeof(void(*)()));
         static_assert(offsetof(War3RenderPluginApiV2, submitEditorInstanceRoster) == 8 + 35 * sizeof(void(*)()));
-        static_assert(sizeof(War3RenderPluginApiV2) == 8 + 39 * sizeof(void(*)()));
+        static_assert(offsetof(War3RenderPluginApiV2, getModelLayerCapabilities) == 8 + 39 * sizeof(void(*)()));
+        static_assert(sizeof(War3RenderPluginApiV2) == 8 + 40 * sizeof(void(*)()));
+        static_assert(offsetof(War3RenderModelSceneLayerV2, role) == (sizeof(void*) == 8 ? 56 : 48));
+        static_assert(sizeof(War3RenderModelSceneLayerV2) == (sizeof(void*) == 8 ? 64 : 56));
         static_assert(std::is_standard_layout_v<War3RenderFrameMetricsV2> && sizeof(War3RenderFrameMetricsV2) == 408);
         static_assert(sizeof(War3RenderFrameMetricsV2::completedSteadyNs) == 8
             && offsetof(War3RenderFrameMetricsV2, completedSteadyNs) == 16

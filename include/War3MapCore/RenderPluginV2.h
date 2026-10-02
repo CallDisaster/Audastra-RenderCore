@@ -368,6 +368,8 @@ struct War3RenderPluginApiV2 {
     // 旧插件没有此尾部时，宿主必须保留在途owner直到可证明的终态。
     std::int32_t (WAR3_RENDER_CALL* cancelEditorInstanceRoster)(War3RendererHandle,
         std::uint64_t ticket, War3RenderInstanceRosterResultV2*);
+    // 可选只读尾部；先核offsetof+sizeof指针及非空。缺能力不能发送新模型层角色。
+    std::int32_t (WAR3_RENDER_CALL* getModelLayerCapabilities)(War3RendererHandle, std::uint32_t* flags);
 };
 using War3GetRenderPluginApiV2 = const War3RenderPluginApiV2* (WAR3_RENDER_CALL*)(std::uint32_t);
 WAR3_RENDER_EXPORT const War3RenderPluginApiV2* WAR3_RENDER_CALL
