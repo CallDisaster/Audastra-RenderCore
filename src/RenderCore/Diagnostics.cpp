@@ -84,7 +84,7 @@ DiagnosticText Text(Code code) noexcept {
     case Code::MaterialAlphaGlobalSpanUnsupported: return {"MDX_MATERIAL_ALPHA_GLOBAL_SPAN_UNSUPPORTED", "KMTA归零帧跨度超过已界定有符号范围。"};
     case Code::MaterialAlphaLimit: return {"MDX_MATERIAL_ALPHA_LIMIT", "KMTA轨迹或层数量超过有界预算。"};
     case Code::MaterialTextureUninterpreted: return {"MDX_MATERIAL_TEXTURE_UNINTERPRETED", "KMTF层含重复轨迹、未知尾部、TXAN或未支持的UV组；不回退静态成功。"};
-    case Code::MaterialTextureInterpolationUnsupported: return {"MDX_MATERIAL_TEXTURE_INTERPOLATION_UNSUPPORTED", "KMTF仅启用None(0)整数阶梯预览；不对贴图ID做浮点插值。"};
+    case Code::MaterialTextureInterpolationUnsupported: return {"MDX_MATERIAL_TEXTURE_INTERPOLATION_UNSUPPORTED", "KMTF插值编号未知（仅0..3按整数阶梯预览）；不对贴图ID做浮点插值。"};
     case Code::MaterialTextureGlobalSequenceUnsupported: return {"MDX_MATERIAL_TEXTURE_GLOBAL_SEQUENCE_UNSUPPORTED", "KMTF全局序列引用不存在。"};
     case Code::MaterialTextureKeysInvalid: return {"MDX_MATERIAL_TEXTURE_KEYS_INVALID", "KMTF键未严格递增；不排序或删键。"};
     case Code::MaterialTextureReferenceInvalid: return {"MDX_MATERIAL_TEXTURE_REFERENCE_INVALID", "KMTF静态或按键贴图ID越过真实TEXS表。"};

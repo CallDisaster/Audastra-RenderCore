@@ -116,9 +116,12 @@ void Run() {
     invalid = model; invalid.sequences[1].flags = 1;
     Check(Compare(invalid, UINT64_MAX) == Code::Ok
         && (*SampleMdxLayerTextureIds(invalid, {0, 1, UINT64_MAX, 0}).value)[1] == 0, "尾后未保持真实末键");
+    // 整数贴图ID轨迹的Hermite标记按阶梯取键，切线原位保留；未知插值编号仍拒绝。
     auto cubic = *ParseMdx(Fixture(2)).value;
     Check(cubic.materials[0].layers[1].textureKeys[0].inTangentBits == 0xf1234567u
-        && Compare(cubic, 0) == Code::MaterialTextureInterpolationUnsupported, "未证插值静默执行/原位丢失");
+        && Compare(cubic, 0) == Code::Ok && Compare(cubic, 1000) == Code::Ok, "整数轨迹Hermite标记未按阶梯/原位丢失");
+    auto unknown = cubic; unknown.materials[0].layers[1].textureInterpolation = 4;
+    Check(Compare(unknown, 0) == Code::MaterialTextureInterpolationUnsupported, "未知插值编号静默执行");
     const auto duplicate = *ParseMdx(Fixture(0, false, true)).value;
     Check(duplicate.materials[0].layers[1].duplicateTextureTracks.size() == 1
         && duplicate.materials[0].layers[1].duplicateTextureTracks[0].keys.size() == 2

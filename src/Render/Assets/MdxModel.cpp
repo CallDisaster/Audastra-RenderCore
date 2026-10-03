@@ -741,7 +741,8 @@ Result<std::vector<std::uint32_t>> SampleMdxLayerTextureIds(const MdxModel& mode
                     if (!layer.textureKeys.empty()) return reject("MDX_MATERIAL_TEXTURE_UNINTERPRETED", offset);
                     output.push_back(layer.textureId); continue;
                 }
-                if (layer.textureInterpolation != 0)
+                // 与核心一致：整数贴图ID轨迹的0..3插值标记都按阶梯取键，未知编号仍拒绝。
+                if (layer.textureInterpolation > 3)
                     return reject("MDX_MATERIAL_TEXTURE_INTERPOLATION_UNSUPPORTED", offset + 8, layer.textureInterpolation);
                 const bool global = layer.textureGlobalSequence != UINT32_MAX;
                 if (global && layer.textureGlobalSequence >= model.globalSequences.size())

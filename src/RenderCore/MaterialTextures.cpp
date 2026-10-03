@@ -40,7 +40,9 @@ Code CheckTextureLayer(const War3Map::Render::MdxMaterial& material,
         if (!layer.textureKeys.empty()) return fail(Code::MaterialTextureUninterpreted, layout.sourceByteOffset, 0);
         return Code::Ok;
     }
-    if (layer.textureInterpolation != 0)
+    // 贴图ID是整数轨迹：Linear/Hermite/Bezier标记不改变取值，统一按阶梯取键（与mdx-m3-viewer整数轨迹一致）；
+    // 切线原样保留。只有未知插值编号仍拒绝。
+    if (layer.textureInterpolation > 3)
         return fail(Code::MaterialTextureInterpolationUnsupported, layer.textureSourceByteOffset + 8, layer.textureInterpolation);
     if (layer.textureGlobalSequence != NoIndex && layer.textureGlobalSequence >= periods.size())
         return fail(Code::MaterialTextureGlobalSequenceUnsupported, layer.textureSourceByteOffset + 12, layer.textureGlobalSequence);
@@ -149,7 +151,7 @@ War3Map::Result<CompiledMaterialTextures> CompileMdxMaterialTextures(
         auto result = Out::Success(MaterialTextureAccess::Make(std::move(data)));
         if (result.value->HasAnimatedTexture()) result.diagnostics.push_back({War3Map::DiagnosticSeverity::Warning,
             "RenderCore.MaterialTextures", "MATERIAL_TEXTURE_PREVIEW_APPROXIMATE",
-            "KMTF None(0)使用有界整数阶梯GenericPreview；原版选键/边界等价尚未证明。", std::nullopt});
+            "KMTF按有界整数阶梯GenericPreview（含标记为Linear/Hermite/Bezier的整数轨迹）；原版选键/边界等价尚未证明。", std::nullopt});
         return result;
     } catch (const std::bad_alloc&) { return failure(Code::AllocationFailed); }
     catch (const std::length_error&) { return failure(Code::AllocationFailed); }
