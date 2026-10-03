@@ -726,6 +726,13 @@ Result<std::vector<std::uint32_t>> SampleMdxLayerTextureIds(const MdxModel& mode
             for (const auto& layer : material.layers) {
                 const auto offset = layer.animatedTexture ? layer.textureSourceByteOffset : layer.staticTextureIdByteOffset;
                 if (layer.textureKeys.size() > hard.maxTrackKeys) return reject("MDX_MATERIAL_TEXTURE_LIMIT");
+                // 与核心一致：无KMTF的层直接取真实静态ID，不受TXAN/坐标组/其它字段影响。
+                if (!layer.animatedTexture) {
+                    if (layer.textureId >= model.textures.size())
+                        return reject("MDX_MATERIAL_TEXTURE_REFERENCE_INVALID", layer.staticTextureIdByteOffset, layer.textureId);
+                    if (!layer.textureKeys.empty()) return reject("MDX_MATERIAL_TEXTURE_UNINTERPRETED", offset);
+                    output.push_back(layer.textureId); continue;
+                }
                 if (material.hasUninterpretedData || layer.hasUninterpretedData)
                     return reject("MDX_MATERIAL_TEXTURE_UNINTERPRETED", offset);
                 if (layer.duplicateTextureByteOffset || !layer.duplicateTextureTracks.empty())

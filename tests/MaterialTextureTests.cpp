@@ -110,6 +110,11 @@ void Run() {
     Check(Compare(invalid, 0) == Code::MaterialTextureGlobalSequenceUnsupported, "不存在GLBS引用未拒绝");
     global.materials[0].layers[1].textureKeys[1].frame = 0x80000100u;
     Check(Compare(global, 0) == Code::MaterialTextureGlobalSpanUnsupported, "全局跨度越界未拒绝");
+    // 同一模型里无KMTF的层带TXAN/坐标组时保持静态ID，不能连累整个模型被拒。
+    auto uvAnimated = model; uvAnimated.materials[0].layers[0].textureAnimationId = 0; uvAnimated.materials[0].layers[0].coordId = 1;
+    Check(!uvAnimated.materials[0].layers[0].animatedTexture && Compare(uvAnimated, 500) == Code::Ok
+        && (*SampleMdxLayerTextureIds(uvAnimated, {0, 1, 500, 0}).value)[0] == uvAnimated.materials[0].layers[0].textureId,
+        "静态层TXAN/坐标组导致整模型KMTF拒绝");
     invalid = model; invalid.materials[0].layers[1].textureKeys.clear();
     Check(Compare(invalid, 500) == Code::Ok
         && (*SampleMdxLayerTextureIds(invalid, {0, 1, 500, 0}).value)[1] == 0, "空轨迹未使用真实静态ID");

@@ -24,6 +24,14 @@ Code CheckTextureLayer(const War3Map::Render::MdxMaterial& material,
     const auto fail = [&](Code code, std::uint64_t offset, std::uint32_t value, std::uint32_t frame = 0) {
         channel.issue = TextureIssue(layout, code, offset, value, frame); return code;
     };
+    // 没有KMTF的层贴图ID固定，与UV动画(TXAN)、坐标组和其它未解释字段无关：保持静态贴图，
+    // 不能因为同一场景里别的模型有KMTF就把这些层（以及整个模型）拒绝隐藏。
+    if (!layer.animatedTexture) {
+        if (layer.textureId >= textureCount)
+            return fail(Code::MaterialTextureReferenceInvalid, layer.staticTextureIdByteOffset, layer.textureId);
+        if (!layer.textureKeys.empty()) return fail(Code::MaterialTextureUninterpreted, layout.sourceByteOffset, 0);
+        return Code::Ok;
+    }
     if (material.hasUninterpretedData || layer.hasUninterpretedData)
         return fail(Code::MaterialTextureUninterpreted, layout.sourceByteOffset, 0);
     if (layer.duplicateTextureByteOffset || !layer.duplicateTextureTracks.empty())
