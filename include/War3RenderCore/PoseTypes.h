@@ -150,6 +150,7 @@ enum class Code : std::uint32_t {
     MaterialTextureUninterpreted, MaterialTextureInterpolationUnsupported,
     MaterialTextureGlobalSequenceUnsupported, MaterialTextureKeysInvalid,
     MaterialTextureReferenceInvalid, MaterialTextureGlobalSpanUnsupported, MaterialTextureLimit,
+    NodeSourceOrderPreview, NodeSourceOrderKeyLimit,
 };
 enum class Severity : std::uint32_t { Warning = 0, Error = 1 };
 enum class TrackKind : std::uint32_t { None = 0, Translation = 1, Rotation = 2, Scale = 3, MaterialAlpha = 4, MaterialTexture = 5 };

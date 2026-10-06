@@ -6,6 +6,7 @@
 #include "War3RenderCore/CompiledModel.h"
 #include "War3RenderCore/ExternalFrame.h"
 #include "War3RenderCore/MaterialTextures.h"
+#include "War3RenderCore/NodeKeySamplingPolicy.h"
 
 #include <memory>
 #include <span>
@@ -44,6 +45,12 @@ public:
         std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
         GeosetFailurePolicy policy, MaterialChannelOptions materials, TextureChannelOptions textures,
         std::span<const CompiledMaterialTextures> textureAssets);
+
+    // 只在此显式入口选择源序节点预览；全部旧Create和外部帧入口保持Strict。
+    [[nodiscard]] static War3Map::Result<PoseBatchEvaluator> Create(
+        std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
+        GeosetFailurePolicy policy, MaterialChannelOptions materials, TextureChannelOptions textures,
+        std::span<const CompiledMaterialTextures> textureAssets, NodeKeySamplingPolicy nodeKeys);
 
     // 专用模式：预热新回执且计入预算，不改变旧 Create 的存储估计或预算边界。
     // 两个模式不能互调 Evaluate；误用仍使前次输出失效。
@@ -95,6 +102,7 @@ private:
     std::unique_ptr<Detail::GeosetPreviewData> preview_;
     std::unique_ptr<Detail::MaterialBatchData> materials_;
     std::unique_ptr<Detail::TextureBatchData> textures_;
+    NodeKeySamplingPolicy nodeKeys_ = NodeKeySamplingPolicy::Strict;
 };
 
 } // namespace War3RenderCore

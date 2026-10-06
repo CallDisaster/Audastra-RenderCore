@@ -44,3 +44,8 @@ Computed/ExternalGroups 是近似预览；新外部帧输入验证并复制宿�
 `python tools/dev/update-render-core-lock.py`，由该脚本重新生成提交/版本/全文件 SHA 锁。
 FORGE 配置及实际消费者构建都拒绝未提交的共享修改；不要在 FORGE 恢复第二份实现。
 共享仓库保持无远程、无推送，发布时机仍由作者决定。
+
+0.1.12 增加宿主显式选择的普通节点原序近似预览，保留默认 Strict、全局轨迹和所有旧入口。
+核心批量与参考共用唯一原序选择 helper；源键不排序、不删、不改，逐节点警告持续声明
+未确认原版缓存等价。接口、预算、合成和可选本机 SHA 绑定回归见
+`docs/SOURCE_ORDER_NODE_PREVIEW.md`。尚须候选本地 Release/CTest 及消费者实际预览验收。

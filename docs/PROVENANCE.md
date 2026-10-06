@@ -3,6 +3,15 @@
 
 # W0/W1 文件级来源审查（只读产品代码，2026-09-30）
 
+## 0.1.12 原序节点预览增补（2026-10-07）
+
+`NodeKeySamplingPolicy.h`、`SourceOrderNodeTrack.h` 与对应 API/诊断/预热接线由本项目原创。
+`SourceOrderPreviewFixture.h` 为原创空几何 MDX 字节夹具，数值独立编写；真实本机模型仅
+通过环境变量及固定地图/模型 SHA 门禁测试，不在源码或包中包含。
+接口/算法/测试的来源和等价边界详见 `SOURCE_ORDER_NODE_PREVIEW.md`。第三方公开读取器
+仅作格式和边界资料，未复制 WarVK、第三方或游戏实现，未宣称原版缓存等价。
+此段是当前候选增补；下面原始 W0/W1 逐文件 SHA 表属于其注明的历史冻结点。
+
 冻结源码：`${FORGE_SOURCE_DIR}`，HEAD `a5c09254bd112667f070b2897a5d7d7cae8ea96c`。初查从主检出同一 HEAD 开始；随后已转冻结 worktree，当前 HEAD 与所有待审产品文件 diff 均为空。审查代理没有编译、移动源码、改许可证或联系其他聊天；唯一写入是本报告。
 
 ## 来源结论与证据限度

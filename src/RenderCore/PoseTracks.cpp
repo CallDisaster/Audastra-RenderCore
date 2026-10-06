@@ -2,6 +2,7 @@
 // Copyright (C) 2026 CallDisaster
 
 #include "PoseTracks.h"
+#include "SourceOrderNodeTrack.h"
 
 namespace War3RenderCore::Detail {
 namespace {
@@ -22,30 +23,56 @@ std::array<float, N> SampleTrack(const Track<N>& track, std::array<float, N> fal
     // 零周期的全局时钟固定为 0，仍使用全局区间，不能回退到动作时间。
     const std::int64_t time = track.global
         ? (track.period == 0 ? 0 : static_cast<std::int64_t>(globalTime % track.period)) : frame;
-    // 全局键加载时减去首帧，使用全部键；周期外的右键仍可能参与当前插值。
-    auto begin = track.keys.begin(), end = track.keys.end();
-    if (!track.sequenceKeys.empty()) {
-        const auto range = track.sequenceKeys[sequenceIndex];
-        if (range.offset == NoIndex) { e.Fail(Code::PoseKeysInvalid); return fallback; }
-        begin += range.offset; end = begin + range.count;
-    } else if (!track.global) {
-        begin = std::lower_bound(begin, end, beginTime, [](const auto& key, auto value) { return key.frame < value; });
-        end = std::upper_bound(begin, end, endTime, [](auto value, const auto& key) { return value < key.frame; });
+    const Key<N>* leftKey = nullptr;
+    const Key<N>* rightKey = nullptr;
+    std::int64_t offset = 0, span = 0;
+    bool seam = false;
+    const bool strictRangeInvalid = !track.sequenceKeys.empty()
+        && track.sequenceKeys[sequenceIndex].offset == NoIndex;
+    if (strictRangeInvalid) {
+        if (track.global || e.nodeKeys != NodeKeySamplingPolicy::SourceOrderPreview) {
+            e.Fail(Code::PoseKeysInvalid); return fallback;
+        }
+        const auto remaining = e.sourceOrderKeyBudget ? *e.sourceOrderKeyBudget : 0;
+        if (!e.sourceOrderKeyBudget || track.keys.size() > remaining) {
+            e.failureDiagnostic = Code::NodeSourceOrderKeyLimit;
+            e.failureLeft = static_cast<std::int64_t>(track.keys.size());
+            e.failureRight = static_cast<std::int64_t>(remaining);
+            e.Fail(Code::CapacityExceeded); return fallback;
+        }
+        *e.sourceOrderKeyBudget -= track.keys.size();
+        const auto window = SelectSourceOrderNodeWindow(track.keys, beginTime, endTime, time);
+        if (!window.descending) { e.Fail(Code::PoseKeysInvalid); return fallback; }
+        e.Warn(Code::NodeSourceOrderPreview, window.reverseLeft, window.reverseRight);
+        if (!e.Good() || window.kind == SourceOrderWindowKind::Empty) return fallback;
+        if (window.kind == SourceOrderWindowKind::Value) return keyValue(track.keys[window.left]);
+        leftKey = &track.keys[window.left]; rightKey = &track.keys[window.right];
+        offset = window.offset; span = window.span; seam = window.seam;
+    } else {
+        // 严格/单调/全局路径不变；全局键已经减去首帧，周期外右键仍可参与插值。
+        auto begin = track.keys.begin(), end = track.keys.end();
+        if (!track.sequenceKeys.empty()) {
+            const auto range = track.sequenceKeys[sequenceIndex];
+            begin += range.offset; end = begin + range.count;
+        } else if (!track.global) {
+            begin = std::lower_bound(begin, end, beginTime, [](const auto& key, auto value) { return key.frame < value; });
+            end = std::upper_bound(begin, end, endTime, [](auto value, const auto& key) { return value < key.frame; });
+        }
+        if (begin == end) return fallback;
+        if (end - begin == 1) return keyValue(*begin);
+        const auto found = std::upper_bound(begin, end, time,
+            [](auto value, const auto& key) { return value < key.frame; });
+        if (found != begin && (found - 1)->frame == time) return keyValue(*(found - 1));
+        seam = found == begin || found == end;
+        leftKey = &*(seam ? end - 1 : found - 1);
+        rightKey = &*(seam ? begin : found);
+        // 旧原版接缝合同：首键前的时间差仍取首键；负跨度只加当前动作长度。
+        offset = time - (found == begin ? begin->frame : leftKey->frame);
+        span = static_cast<std::int64_t>(rightKey->frame) - leftKey->frame;
+        if (span < 0) span += static_cast<std::int64_t>(sequence.end) - sequence.start;
     }
-    if (begin == end) return fallback;
-    if (end - begin == 1) return keyValue(*begin);
-    // 原版按源序保留同帧键，sample >= next.frame 时继续，精确命中取最后键。
-    const auto found = std::upper_bound(begin, end, time,
-        [](auto value, const auto& key) { return value < key.frame; });
-    if (found != begin && (found - 1)->frame == time) return keyValue(*(found - 1));
-    const bool seam = found == begin || found == end;
-    const auto& left = *(seam ? end - 1 : found - 1);
-    const auto& right = *(seam ? begin : found);
-    // 1.27a 的末键右邻回到首键；首键前虽然改选末键，时间差仍取原首键。
-    // 负跨度只加当前动作长度（全局轨迹也如此），不能改成全局周期或钳值。
-    const auto offset = time - (found == begin ? begin->frame : left.frame);
-    auto span = static_cast<std::int64_t>(right.frame) - left.frame;
-    if (span < 0) span += static_cast<std::int64_t>(sequence.end) - sequence.start;
+    const auto& left = *leftKey;
+    const auto& right = *rightKey;
     if (seam && (time > INT32_MAX || offset < INT32_MIN || offset > INT32_MAX
         || span < INT32_MIN || span > INT32_MAX)) {
         e.Fail(Code::PoseBoundaryUnsupported); return fallback;

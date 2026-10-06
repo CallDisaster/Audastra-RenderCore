@@ -4,6 +4,7 @@
 #pragma once
 
 #include "War3MapCore/Render/MdxModel.h"
+#include "War3RenderCore/NodeKeySamplingPolicy.h"
 
 #include <array>
 #include <cstddef>
@@ -48,6 +49,9 @@ struct MdxPoseSample {
 };
 
 [[nodiscard]] Result<MdxPoseSample> SampleMdxNodePose(const MdxModel& model, const MdxPoseRequest& request);
+// 原两参入口继续Strict；只有宿主显式调用此入口才允许普通逆序源键预览。
+[[nodiscard]] Result<MdxPoseSample> SampleMdxNodePose(const MdxModel& model, const MdxPoseRequest& request,
+    War3RenderCore::NodeKeySamplingPolicy nodeKeys);
 
 // CPU 组矩阵蒙皮；函数名保留初版刚性接口的兼容性。每个 MTGC 组把 MATS 引用的
 // BONE/HELP 仿射矩阵逐分量平均，GNDX 的每个顶点只引用一条组矩阵。法线使用同一矩阵的

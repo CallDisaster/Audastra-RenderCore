@@ -4,6 +4,7 @@
 #include "War3MapCore/Render/MdxPose.h"
 #include "MdxRigidStaticPreviewInternal.h"
 #include "MdxNormalPreview.h"
+#include "../../RenderCore/SourceOrderNodeTrack.h"
 
 #include <algorithm>
 #include <cmath>
@@ -101,7 +102,7 @@ template <std::size_t N>
 std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxNodeTrack<N>>& optional,
     std::array<float, N> fallback, const MdxSequence& sequence, std::uint32_t sequenceFrame,
     std::uint64_t globalElapsedMs, std::uint32_t objectId, const char* trackName,
-    std::vector<Diagnostic>& warnings) {
+    std::vector<Diagnostic>& warnings, War3RenderCore::NodeKeySamplingPolicy nodeKeys) {
     if (!optional) return fallback;
     const auto& track = *optional;
     if (track.interpolation != MdxInterpolation::None && track.interpolation != MdxInterpolation::Linear
@@ -122,34 +123,54 @@ std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxN
     std::vector<const MdxNodeKey<N>*> keys;
     keys.reserve(track.keys.size());
     const bool global = track.globalSequence != UINT32_MAX;
+    bool sourceOrder = false;
     std::int64_t previous = std::numeric_limits<std::int64_t>::min();
     for (const auto& key : track.keys) {
-        if (key.frame < previous && (global || (key.frame <= time.end && previous >= time.start)))
-            Fail("MDX_POSE_KEYS_INVALID", "本次节点采样触及逆序帧区间；未实现原版逆序缓存语义，同帧按源序保留。");
+        if (key.frame < previous && (global || (key.frame <= time.end && previous >= time.start))) {
+            if (global || nodeKeys != War3RenderCore::NodeKeySamplingPolicy::SourceOrderPreview)
+                Fail("MDX_POSE_KEYS_INVALID", "本次节点采样触及逆序帧区间；未实现原版逆序缓存语义，同帧按源序保留。");
+            sourceOrder = true;
+        }
         previous = key.frame;
         if (global && static_cast<std::int64_t>(key.frame) - track.keys.front().frame > INT32_MAX)
             Fail("MDX_POSE_GLOBAL_SPAN_UNSUPPORTED", "全局轨迹归零后的帧跨度超出已确认的有符号范围。");
         if (global || (key.frame >= time.start && key.frame <= time.end)) keys.push_back(&key);
     }
-    if (keys.empty()) return fallback;
-    if (keys.size() == 1) {
-        CheckFinite(keys.front()->value);
-        return keys.front()->value;
+    const MdxNodeKey<N>* leftKey = nullptr;
+    const MdxNodeKey<N>* rightKey = nullptr;
+    std::int64_t delta = 0, interval = 0;
+    bool outside = false;
+    if (sourceOrder) {
+        const auto window = War3RenderCore::Detail::SelectSourceOrderNodeWindow(
+            track.keys, time.start, time.end, time.frame);
+        PreviewWarning(warnings, "MDX_POSE_SOURCE_ORDER_PREVIEW",
+            War3RenderCore::Detail::DescribeSourceOrderNodePreview(trackName, objectId,
+                window.reverseLeft, window.reverseRight));
+        if (window.kind == War3RenderCore::Detail::SourceOrderWindowKind::Empty) return fallback;
+        if (window.kind == War3RenderCore::Detail::SourceOrderWindowKind::Value) {
+            CheckFinite(track.keys[window.left].value);
+            return track.keys[window.left].value;
+        }
+        leftKey = &track.keys[window.left]; rightKey = &track.keys[window.right];
+        delta = window.offset; interval = window.span; outside = window.seam;
+    } else {
+        if (keys.empty()) return fallback;
+        if (keys.size() == 1) { CheckFinite(keys.front()->value); return keys.front()->value; }
+        const auto found = std::upper_bound(keys.begin(), keys.end(), time.frame,
+            [](std::int64_t frame, const auto* key) { return frame < key->frame; });
+        if (found != keys.begin() && (*(found - 1))->frame == time.frame) {
+            CheckFinite((*(found - 1))->value); return (*(found - 1))->value;
+        }
+        outside = found == keys.begin() || found == keys.end();
+        leftKey = outside ? keys.back() : *(found - 1);
+        rightKey = outside ? keys.front() : *found;
+        // 严格参考接缝保持原合同；普通逆序新增选择仅由上面共享helper完成。
+        delta = time.frame - (found == keys.begin() ? keys.front()->frame : leftKey->frame);
+        interval = static_cast<std::int64_t>(rightKey->frame) - leftKey->frame;
+        if (interval < 0) interval += static_cast<std::int64_t>(sequence.end) - sequence.start;
     }
-    // 独立参考沿用源键，跨过全部相等帧后取最后一条，不去重或重排。
-    const auto found = std::upper_bound(keys.begin(), keys.end(), time.frame,
-        [](std::int64_t frame, const auto* key) { return frame < key->frame; });
-    if (found != keys.begin() && (*(found - 1))->frame == time.frame) {
-        CheckFinite((*(found - 1))->value);
-        return (*(found - 1))->value;
-    }
-    const bool outside = found == keys.begin() || found == keys.end();
-    const auto& left = outside ? *keys.back() : **(found - 1);
-    const auto& right = outside ? *keys.front() : **found;
-    // 独立参考保留源帧：首键前的偏移基准仍是首键，实际端点则是末键/首键。
-    const auto delta = time.frame - (found == keys.begin() ? keys.front()->frame : left.frame);
-    auto interval = static_cast<std::int64_t>(right.frame) - left.frame;
-    if (interval < 0) interval += static_cast<std::int64_t>(sequence.end) - sequence.start;
+    const auto& left = *leftKey;
+    const auto& right = *rightKey;
     const auto nativeTime = time.frame - (global ? track.keys.front().frame : 0);
     if (outside && (nativeTime > INT32_MAX || delta < INT32_MIN || delta > INT32_MAX
         || interval < INT32_MIN || interval > INT32_MAX))
@@ -372,7 +393,11 @@ Matrix CameraFacingWorld(const MdxPoseNode& node, const Matrix& staticWorld,
 #include "MdxInheritanceReference.inl"
 
 MdxPoseSample Sample(const MdxModel& model, const MdxPoseRequest& request,
-    std::vector<Diagnostic>& warnings) {
+    std::vector<Diagnostic>& warnings,
+    War3RenderCore::NodeKeySamplingPolicy nodeKeys = War3RenderCore::NodeKeySamplingPolicy::Strict) {
+    if (nodeKeys != War3RenderCore::NodeKeySamplingPolicy::Strict
+        && nodeKeys != War3RenderCore::NodeKeySamplingPolicy::SourceOrderPreview)
+        Fail("MDX_POSE_ARGUMENT_INVALID", "节点按键采样策略未知。");
     const MdxLimits hard;
     if (model.version != 800 || model.bones.size() > hard.maxBones || model.helpers.size() > hard.maxHelpers
         || MdxNodeCount(model) > hard.maxNodes || model.pivots.size() > hard.maxPivots || model.sequences.size() > hard.maxSequences
@@ -436,11 +461,11 @@ MdxPoseSample Sample(const MdxModel& model, const MdxPoseRequest& request,
         node.parentId = source.parentId;
         node.pivot = model.pivots[source.objectId];
         node.translation = SampleTrack(model, source.translation, node.translation, sequence, frame,
-            request.globalElapsedMs, source.objectId, "KGTR", warnings);
+            request.globalElapsedMs, source.objectId, "KGTR", warnings, nodeKeys);
         node.rotation = Normalize(SampleTrack(model, source.rotation, node.rotation, sequence, frame,
-            request.globalElapsedMs, source.objectId, "KGRT", warnings));
+            request.globalElapsedMs, source.objectId, "KGRT", warnings, nodeKeys));
         node.scaling = SampleTrack(model, source.scaling, node.scaling, sequence, frame,
-            request.globalElapsedMs, source.objectId, "KGSC", warnings);
+            request.globalElapsedMs, source.objectId, "KGSC", warnings, nodeKeys);
         node.localMatrix = LocalMatrix(node);
         node.worldMatrix = result.chain.empty() ? node.localMatrix : Multiply(result.chain.back().worldMatrix, node.localMatrix);
         if ((source.flags & 7u) != 0)
@@ -609,9 +634,14 @@ MdxRigidSkinnedGeoset StaticPreviewGeoset(const MdxModel& model, const MdxRigidS
 } // namespace
 
 Result<MdxPoseSample> SampleMdxNodePose(const MdxModel& model, const MdxPoseRequest& request) {
+    return SampleMdxNodePose(model, request, War3RenderCore::NodeKeySamplingPolicy::Strict);
+}
+
+Result<MdxPoseSample> SampleMdxNodePose(const MdxModel& model, const MdxPoseRequest& request,
+    War3RenderCore::NodeKeySamplingPolicy nodeKeys) {
     try {
         std::vector<Diagnostic> warnings;
-        auto result = Result<MdxPoseSample>::Success(Sample(model, request, warnings));
+        auto result = Result<MdxPoseSample>::Success(Sample(model, request, warnings, nodeKeys));
         result.diagnostics = std::move(warnings);
         return result;
     } catch (const PoseError& error) {

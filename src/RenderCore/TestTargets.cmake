@@ -20,6 +20,25 @@ foreach(_render_core_group IN ITEMS oracle instances external)
     set_tests_properties(render-core-${_render_core_group} PROPERTIES TIMEOUT 60)
 endforeach()
 
+# 0.1.12：显式源序节点预览；固定数值、严格门禁、预算/无分配及真实SHA绑定分开验收。
+add_executable(war3-render-source-order-tests
+    "${_render_core_repo}/tests/SourceOrderPreviewTests.cpp"
+    "${_render_core_repo}/tests/RenderCoreAllocProbe.cpp")
+target_link_libraries(war3-render-source-order-tests PRIVATE War3RenderCore::CPU)
+war3_render_core_options(war3-render-source-order-tests)
+foreach(_source_order_group IN ITEMS source-order boundaries budgets)
+    add_test(NAME render-source-order-${_source_order_group}
+        COMMAND war3-render-source-order-tests ${_source_order_group})
+    set_tests_properties(render-source-order-${_source_order_group} PROPERTIES TIMEOUT 60)
+endforeach()
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME render-source-order-real
+        COMMAND "${Python3_EXECUTABLE}" "${_render_core_repo}/tests/SourceOrderPreviewRealTests.py"
+            "$<TARGET_FILE:war3-render-source-order-tests>")
+    set_tests_properties(render-source-order-real PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
+
 add_executable(war3-render-core-compact-tests
     "${_render_core_repo}/tests/RenderCoreCompactTests.cpp"
     "${_render_core_repo}/tests/RenderCoreAllocProbe.cpp"

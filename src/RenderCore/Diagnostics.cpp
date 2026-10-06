@@ -2,6 +2,7 @@
 // Copyright (C) 2026 CallDisaster
 
 #include "War3RenderCore/PoseTypes.h"
+#include "SourceOrderNodeTrack.h"
 
 namespace War3RenderCore {
 namespace {
@@ -90,6 +91,8 @@ DiagnosticText Text(Code code) noexcept {
     case Code::MaterialTextureReferenceInvalid: return {"MDX_MATERIAL_TEXTURE_REFERENCE_INVALID", "KMTF静态或按键贴图ID越过真实TEXS表。"};
     case Code::MaterialTextureGlobalSpanUnsupported: return {"MDX_MATERIAL_TEXTURE_GLOBAL_SPAN_UNSUPPORTED", "KMTF归零全局键跨度超过已界定有符号范围。"};
     case Code::MaterialTextureLimit: return {"MDX_MATERIAL_TEXTURE_LIMIT", "KMTF拥有轨迹/可达贴图/布局超过有界预算。"};
+    case Code::NodeSourceOrderPreview: return {"MDX_POSE_SOURCE_ORDER_PREVIEW", "节点轨迹含逆序源键；采用原序兼容预览，未确认原版缓存等价。"};
+    case Code::NodeSourceOrderKeyLimit: return {"RENDER_CORE_SOURCE_ORDER_KEY_LIMIT", "显式原序预览超过每批1048576次按键访问的硬上限；该实例按CapacityExceeded拒绝。"};
     }
     return {"RENDER_CORE_UNKNOWN_DIAGNOSTIC", "未知诊断编号。"};
 }
@@ -103,6 +106,10 @@ std::string DescribeDiagnostic(const PoseDiagnostic& diagnostic) {
     const char* track = diagnostic.track == TrackKind::Translation ? "KGTR"
         : diagnostic.track == TrackKind::Scale ? "KGSC" : "KGRT";
     switch (diagnostic.code) {
+    case Code::NodeSourceOrderPreview:
+        return Detail::DescribeSourceOrderNodePreview(track, diagnostic.objectId, diagnostic.leftFrame, diagnostic.rightFrame);
+    case Code::NodeSourceOrderKeyLimit:
+        return Detail::DescribeSourceOrderNodeKeyLimit(track, diagnostic.objectId, diagnostic.leftFrame, diagnostic.rightFrame);
     case Code::GenericRotationPreview:
         return std::string(track) + " " + object + " 在 " + std::to_string(diagnostic.leftFrame) + ".."
             + std::to_string(diagnostic.rightFrame) + " 帧之间使用通用四元数 squad 预览，非原版等价证明。";

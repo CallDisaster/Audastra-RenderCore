@@ -4,6 +4,7 @@
 #pragma once
 
 #include "War3RenderCore/CompiledModel.h"
+#include "War3RenderCore/NodeKeySamplingPolicy.h"
 #include "War3MapCore/Render/MdxModel.h"
 
 #include <vector>
@@ -100,6 +101,11 @@ struct Evaluation {
     TrackKind track = TrackKind::None;
     Code error = Code::Ok;
     bool Good() const noexcept { return error == Code::Ok; }
+    NodeKeySamplingPolicy nodeKeys = NodeKeySamplingPolicy::Strict;
+    // 只在显式原序批次使用；共享所有实例，指向Evaluate栈上的有界计数。
+    std::uint64_t* sourceOrderKeyBudget = nullptr;
+    Code failureDiagnostic = Code::Ok;
+    std::int64_t failureLeft = 0, failureRight = 0;
     void Fail(Code code) noexcept { if (Good()) error = code; }
     void Warn(Code code, std::int64_t left = 0, std::int64_t right = 0) noexcept {
         if (used >= diagnostics.size()) { Fail(Code::CapacityExceeded); return; }

@@ -6,6 +6,7 @@
 #include "GeosetChannels.h"
 #include "MaterialChannels.h"
 #include "MaterialTextures.h"
+#include "SourceOrderNodeTrack.h"
 
 #include <algorithm>
 #include <cmath>
@@ -301,6 +302,32 @@ War3Map::Result<PoseBatchEvaluator> PoseBatchEvaluator::Create(
     catch (const std::length_error&) { return failure(Code::AllocationFailed); }
 }
 
+War3Map::Result<PoseBatchEvaluator> PoseBatchEvaluator::Create(
+    std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
+    GeosetFailurePolicy policy, MaterialChannelOptions materials, TextureChannelOptions textures,
+    std::span<const CompiledMaterialTextures> textureAssets, NodeKeySamplingPolicy nodeKeys) {
+    const auto failure = [](Code code) {
+        return War3Map::Result<PoseBatchEvaluator>::Failure("RenderCore.Prepare", CodeName(code), CodeMessage(code));
+    };
+    if (nodeKeys != NodeKeySamplingPolicy::Strict && nodeKeys != NodeKeySamplingPolicy::SourceOrderPreview)
+        return failure(Code::RequestInvalid);
+    auto result = Create(assets, evaluationEpoch, limits, policy, materials, textures, textureAssets);
+    if (!result.Succeeded() || nodeKeys == NodeKeySamplingPolicy::Strict) return result;
+    const auto count = 7ull * limits.maxNodes + limits.maxInstances;
+    const auto extraBytes = 3ull * limits.maxNodes * sizeof(PoseDiagnostic);
+    if (count > UINT32_MAX || result.value->StorageBytes() > limits.maxBytes
+        || extraBytes > limits.maxBytes - result.value->StorageBytes())
+        return failure(Code::CapacityExceeded);
+    try {
+        // 准备阶段预热；Evaluate不分配。旧严格BatchData大小/预算保持原样。
+        result.value->data_->diagnostics.resize(static_cast<std::size_t>(count));
+        result.value->data_->storageBytes += extraBytes;
+        result.value->nodeKeys_ = nodeKeys;
+        return result;
+    } catch (const std::bad_alloc&) { return failure(Code::AllocationFailed); }
+    catch (const std::length_error&) { return failure(Code::AllocationFailed); }
+}
+
 BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
     std::span<const GroupMatrix> externalGroups, std::span<const BoneOverride> overrides) noexcept {
     if (!data_) return {Code::RequestInvalid, 0, 0};
@@ -333,6 +360,7 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
     for (std::size_t i = 1; i < identities.size(); ++i)
         if (identities[i] == identities[i - 1]) return {Code::DuplicateInstance, 0, 0};
 
+    std::uint64_t sourceOrderKeyBudget = MaxSourceOrderKeyVisits;
     std::uint32_t nodeOffset = 0, groupOffset = 0, alphaOffset = 0, layerOffset = 0, diagnosticOffset = 0, failed = 0;
     for (std::size_t i = 0; i < requests.size(); ++i) {
         const auto& r = requests[i];
@@ -343,7 +371,8 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         const auto layerCount = asset && (materials_ || textures_) ? asset->MaterialLayerCount() : 0;
         if (materials_) { materials_->ranges[i] = {}; materials_->issues[i] = {}; }
         if (textures_) { textures_->ranges[i] = {}; textures_->issues[i] = {}; }
-        const auto diagnosticCapacity = 4 * nodeCount + 1; // 每节点最多两条样条 + 两条相机警告
+        // 源序预览最多另加每TRS通道一条；旧严格入口容量公式不变。
+        const auto diagnosticCapacity = (nodeKeys_ == NodeKeySamplingPolicy::SourceOrderPreview ? 7u : 4u) * nodeCount + 1;
         PoseReceipt receipt;
         receipt.instance = r.instance; receipt.asset = r.asset; receipt.source = r.source;
         receipt.evaluationEpoch = data.epoch;
@@ -354,6 +383,8 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         std::uint32_t issueCount = 0;
         const auto issues = preview_ ? std::span(preview_->issues).subspan(alphaOffset, alphaCount) : std::span<GeosetIssue>{};
         Evaluation e{std::span(data.diagnostics).subspan(diagnosticOffset, diagnosticCapacity)};
+        e.nodeKeys = nodeKeys_;
+        if (nodeKeys_ == NodeKeySamplingPolicy::SourceOrderPreview) e.sourceOrderKeyBudget = &sourceOrderKeyBudget;
         if (!asset) e.Fail(Code::AssetIndexInvalid);
         else EvaluateOne(*asset, r, externalGroups, std::span(data.nodes).subspan(compact ? 0 : nodeOffset, nodeCount),
             std::span(data.groups).subspan(groupOffset, groupCount), std::span(data.alphas).subspan(alphaOffset, alphaCount), std::span(data.colors).subspan(alphaOffset,alphaCount), receipt, e, preview_.get(), issues, issueCount);
@@ -373,7 +404,8 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
             receipt.error = e.error;
             receipt.nodes = {}; receipt.groups = {}; receipt.alphas = {}; receipt.sequenceFrame = 0;
             // 和参考 Result 的失败行为一致：丢弃此前警告，只发布第一条错误，姿势版本仍为 0。
-            e.diagnostics[0] = {e.error, Severity::Error, e.objectId, e.track, 0, 0}; e.used = 1;
+            e.diagnostics[0] = {e.failureDiagnostic == Code::Ok ? e.error : e.failureDiagnostic,
+                Severity::Error, e.objectId, e.track, e.failureLeft, e.failureRight}; e.used = 1;
             issueCount = 0;
         } else receipt.poseVersion = ++data.lastVersion;
         receipt.diagnostics = {diagnosticOffset, e.used};
