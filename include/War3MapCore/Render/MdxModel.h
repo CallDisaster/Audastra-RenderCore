@@ -242,6 +242,45 @@ struct MdxCollisionShape {
     MdxCollisionSupport support = MdxCollisionSupport::LayoutAmbiguous;
 };
 
+// PREM 旧式模型发射器的只读负载；不执行发射、不访问资源、不赋予保存或原版等价资格。
+enum class MdxPremParameter : std::uint32_t {
+    EmissionRate, Gravity, Longitude, Latitude, LifeSpan, Speed, Visibility, Count
+};
+struct MdxPremScalarKey {
+    std::int32_t frame = 0;
+    float value = 0, inTangent = 0, outTangent = 0;
+    std::uint64_t sourceByteOffset = 0; // frame 的原物理位置；三个 float 为 +4/+8/+12。
+    std::array<std::uint32_t, 3> rawValueBits{}; // 原始 value/in/out 位，不修复 NaN/-0。
+};
+struct MdxPremScalarTrack {
+    std::uint32_t interpolation = 0, globalSequence = UINT32_MAX, sourceKeyCount = 0;
+    std::uint64_t sourceByteOffset = 0, sourceByteSize = 0; // tag 起点及已证结构长度。
+    std::vector<MdxPremScalarKey> keys; // 原始次序；不排序、不合并、不给空轨迹补键。
+};
+enum class MdxPremSupport : std::uint32_t {
+    Supported, UnsupportedFlags, InvalidPath, InvalidParameters, UnknownTrack,
+    DuplicateTrack, InvalidTrack, TrackKeyLimit, InvalidGlobalSequence
+};
+struct MdxPremEmitter {
+    std::uint32_t sourceIndex = 0, otherNodeIndex = 0, nodeId = 0, flags = 0;
+    std::uint64_t recordByteOffset = 0, recordByteSize = 0, payloadByteOffset = 0;
+    std::uint64_t pathByteOffset = 0;
+    std::array<std::byte, 260> rawPath{};
+    std::string path; // NUL 前原字节；保留大小写/反斜杠，不猜 .mdl/.mdx 资源别名。
+    bool pathTerminated = false;
+    float emissionRate = 0, gravity = 0, longitude = 0, latitude = 0, lifeSpan = 0, speed = 0;
+    // 上述六字段的文件顺序及逐位原值；角度保留原弧度，未套用 PRE2 度单位。
+    std::array<std::uint32_t, 6> staticValueBits{};
+    std::array<std::optional<MdxPremScalarTrack>, static_cast<std::size_t>(MdxPremParameter::Count)> tracks;
+    // Supported 仅表示 typed 结构/有限字段/已知模型标志可表达，不表示发射或原版时序已经验收。
+    MdxPremSupport support = MdxPremSupport::Supported;
+    std::string issueCode;
+    std::uint64_t issueByteOffset = 0, issueByteLength = 4;
+    std::uint32_t issueValueBits = 0;
+    // 安全外层记录内无法解释的尾部仍有准确物理边界，未将其宣称为已解析轨迹。
+    std::uint64_t uninterpretedTailByteOffset = 0, uninterpretedTailBytes = 0;
+};
+
 struct MdxModel;
 
 // 缺少矩阵组的无控制器静态模型，仅供显式“预览近似”入口。
@@ -284,6 +323,7 @@ struct MdxModel {
     std::string skinningTopologyIssue; // 不完整时显式说明；静态几何仍可读取
     std::size_t skippedChunks = 0; // 按大小跳过的其它块（粒子等）
     std::vector<MdxCollisionShape> collisionShapes; // 只读 CLID 来源，不提供写入/保存能力
+    std::vector<MdxPremEmitter> premEmitters; // PREM 来源顺序，包含局部 unsupported；nodeId 对应 PIVT。
     // 不可伪造构造的解析来源；消费者仍重新检查当前公开几何与原字节一致。
     std::shared_ptr<const MdxRigidStaticPreviewSource> rigidStaticPreviewSource;
 };

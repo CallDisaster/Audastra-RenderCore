@@ -7,12 +7,13 @@
 #include "War3RenderCore/ExternalFrame.h"
 #include "War3RenderCore/MaterialTextures.h"
 #include "War3RenderCore/NodeKeySamplingPolicy.h"
+#include "War3RenderCore/MaterialAlphaKeySamplingPolicy.h"
 
 #include <memory>
 #include <span>
 
 namespace War3RenderCore {
-namespace Detail { struct BatchData; struct ExternalBatchData; struct GeosetPreviewData; struct MaterialBatchData; struct TextureBatchData; }
+namespace Detail { struct BatchData; struct ExternalBatchData; struct GeosetPreviewData; struct MaterialBatchData; struct TextureBatchData; struct MaterialAlphaPreviewBatchData; }
 
 enum class GeosetFailurePolicy : std::uint32_t { Strict = 0, PreviewHideInvalidGeosets = 1 };
 struct GeosetIssue {
@@ -52,6 +53,13 @@ public:
         GeosetFailurePolicy policy, MaterialChannelOptions materials, TextureChannelOptions textures,
         std::span<const CompiledMaterialTextures> textureAssets, NodeKeySamplingPolicy nodeKeys);
 
+    // 材质键策略独立显式选择；全部旧Create和外部帧入口仍为Strict。
+    [[nodiscard]] static War3Map::Result<PoseBatchEvaluator> Create(
+        std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
+        GeosetFailurePolicy policy, MaterialChannelOptions materials, TextureChannelOptions textures,
+        std::span<const CompiledMaterialTextures> textureAssets, NodeKeySamplingPolicy nodeKeys,
+        MaterialAlphaKeySamplingPolicy materialAlphaKeys);
+
     // 专用模式：预热新回执且计入预算，不改变旧 Create 的存储估计或预算边界。
     // 两个模式不能互调 Evaluate；误用仍使前次输出失效。
     [[nodiscard]] static War3Map::Result<PoseBatchEvaluator> CreateExternalFrames(
@@ -85,6 +93,8 @@ public:
     [[nodiscard]] std::span<const float> LayerAlphas(std::uint32_t instanceIndex) const noexcept;
     // 每实例最多首个严格材质错误；物理来源不伪装成node objectId。
     [[nodiscard]] std::span<const MaterialLayerIssue> MaterialIssues(std::uint32_t instanceIndex) const noexcept;
+    // 实际成功警告，借用期与同一PoseReceipt一致；默认/严格模式、整实例失败为空。
+    [[nodiscard]] std::span<const MaterialAlphaPreviewWarning> MaterialAlphaPreviewWarnings(std::uint32_t instanceIndex) const noexcept;
     [[nodiscard]] bool TextureChannelsEnabled() const noexcept;
     // 绝对TEXS ID，不经float；唯一material/layer序，沿同一PoseReceipt，失败为空。
     [[nodiscard]] std::span<const std::uint32_t> LayerTextureIds(std::uint32_t instanceIndex) const noexcept;
@@ -102,7 +112,9 @@ private:
     std::unique_ptr<Detail::GeosetPreviewData> preview_;
     std::unique_ptr<Detail::MaterialBatchData> materials_;
     std::unique_ptr<Detail::TextureBatchData> textures_;
+    std::unique_ptr<Detail::MaterialAlphaPreviewBatchData> materialAlphaPreview_;
     NodeKeySamplingPolicy nodeKeys_ = NodeKeySamplingPolicy::Strict;
+    MaterialAlphaKeySamplingPolicy materialAlphaKeys_ = MaterialAlphaKeySamplingPolicy::Strict;
 };
 
 } // namespace War3RenderCore

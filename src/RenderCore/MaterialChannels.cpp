@@ -20,6 +20,32 @@ Code MaterialCode(Code code) noexcept {
     }
 }
 }
+std::uint64_t MaterialAlphaDuplicateStorageBytes(const War3Map::Render::MdxLayer& layer,
+    bool materialUninterpreted) noexcept {
+    if (materialUninterpreted || layer.hasUninterpretedData || !layer.animatedAlpha
+        || !std::isfinite(layer.alpha) || layer.alphaInterpolation > 3 || layer.alphaGlobalSequence != NoIndex
+        || layer.alphaKeys.size() > War3Map::Render::MdxLimits{}.maxTrackKeys) return 0;
+    std::uint64_t duplicateCount = 0;
+    const War3Map::Render::MdxMaterialAlphaKey* previous = nullptr;
+    for (const auto& key : layer.alphaKeys) {
+        if (!std::isfinite(key.value) || (layer.alphaInterpolation >= 2
+            && (!std::isfinite(key.inTangent) || !std::isfinite(key.outTangent)))) return 0;
+        if (previous) {
+            if (key.frame < previous->frame) return 0;
+            if (key.frame == previous->frame) {
+                if (std::bit_cast<std::uint32_t>(key.value) != std::bit_cast<std::uint32_t>(previous->value)
+                    || (layer.alphaInterpolation >= 2
+                        && (std::bit_cast<std::uint32_t>(key.inTangent) != std::bit_cast<std::uint32_t>(previous->inTangent)
+                            || std::bit_cast<std::uint32_t>(key.outTangent) != std::bit_cast<std::uint32_t>(previous->outTangent)))) return 0;
+                ++duplicateCount;
+            }
+        }
+        previous = &key;
+    }
+    if (!duplicateCount) return 0;
+    return sizeof(MaterialAlphaDuplicatePreview) + layer.alphaKeys.size() * sizeof(GeoKey<1>)
+        + duplicateCount * sizeof(MaterialAlphaPreviewWarning);
+}
 CompiledMaterialChannel CompileMaterialAlpha(const War3Map::Render::MdxLayer& layer,
     bool materialUninterpreted, MaterialLayerLayout layout, const std::vector<std::uint32_t>& periods) {
     CompiledMaterialChannel out;
@@ -32,6 +58,39 @@ CompiledMaterialChannel CompileMaterialAlpha(const War3Map::Render::MdxLayer& la
     }
     out.alpha = CompileMaterialScalarAlpha(layer, periods);
     out.alpha.error = MaterialCode(out.alpha.error); out.issue.error = out.alpha.error;
+    const auto compatibleBytes = out.alpha.error == Code::MaterialAlphaKeysInvalid
+        ? MaterialAlphaDuplicateStorageBytes(layer, false) : 0;
+    if (compatibleBytes) {
+        auto compatible = CompileMaterialScalarAlpha(layer, periods, true);
+        if (compatible.error == Code::Ok) {
+            auto prepared = std::make_unique<MaterialAlphaDuplicatePreview>();
+            prepared->alpha = std::move(compatible);
+            const auto duplicateCount = (compatibleBytes
+                - sizeof(MaterialAlphaDuplicatePreview) - layer.alphaKeys.size() * sizeof(GeoKey<1>)) / sizeof(MaterialAlphaPreviewWarning);
+            prepared->warnings.reserve(static_cast<std::size_t>(duplicateCount));
+            for (std::size_t i = 1; i < layer.alphaKeys.size(); ++i) {
+                const auto& left = layer.alphaKeys[i - 1]; const auto& right = layer.alphaKeys[i];
+                if (left.frame != right.frame) continue;
+                MaterialAlphaPreviewWarning warning;
+                warning.sourceFrame = right.frame;
+                warning.materialIndex = layout.materialIndex; warning.layerIndex = layout.layerIndex;
+                warning.leftSourceByteOffset = left.sourceByteOffset; warning.rightSourceByteOffset = right.sourceByteOffset;
+                warning.sourceValueBits = std::bit_cast<std::uint32_t>(right.value);
+                warning.interpolation = layer.alphaInterpolation;
+                if (layer.alphaInterpolation >= 2) {
+                    warning.inTangentBits = std::bit_cast<std::uint32_t>(right.inTangent);
+                    warning.outTangentBits = std::bit_cast<std::uint32_t>(right.outTangent);
+                }
+                prepared->warnings.push_back(warning);
+            }
+            out.identicalDuplicates = std::move(prepared);
+        }
+    }
+    if (out.alpha.error == Code::Ok || out.identicalDuplicates) {
+        out.sources.reserve(layer.alphaKeys.size());
+        for (const auto& key : layer.alphaKeys)
+            out.sources.push_back({key.sourceByteOffset + 4, key.frame, std::bit_cast<std::uint32_t>(key.value)});
+    }
     if (!layer.animatedAlpha || !std::isfinite(layer.alpha)) return out;
     out.issue.sourceByteOffset = layer.alphaSourceByteOffset;
     if (out.alpha.error == Code::MaterialAlphaInterpolationUnsupported) {
@@ -58,33 +117,50 @@ CompiledMaterialChannel CompileMaterialAlpha(const War3Map::Render::MdxLayer& la
         }
         first = false; previous = key.frame;
     }
-    out.sources.reserve(out.alpha.keys.size());
-    if (out.alpha.error == Code::Ok) for (const auto& key : layer.alphaKeys)
-        out.sources.push_back({key.sourceByteOffset + 4, key.frame, std::bit_cast<std::uint32_t>(key.value)});
     return out;
 }
 bool EvaluateMaterialAlphas(const ModelData& model, const Sequence& sequence, std::uint32_t frame,
-    std::uint64_t global, std::span<float> output, MaterialLayerIssue& issue, Evaluation& e) noexcept {
+    std::uint64_t global, std::span<float> output, MaterialLayerIssue& issue, Evaluation& e,
+    MaterialAlphaKeySamplingPolicy keyPolicy, std::span<MaterialAlphaPreviewWarning> warnings,
+    std::uint32_t& warningCount) noexcept {
+    warningCount = 0;
     if (output.size() != model.materialAlphas.size()) { e.Fail(Code::OutputRangeInvalid); return false; }
     for (std::size_t i = 0; i < model.materialAlphas.size(); ++i) {
         const auto& source = model.materialAlphas[i];
+        const bool compatible = keyPolicy == MaterialAlphaKeySamplingPolicy::IdenticalDuplicatesPreview
+            && source.identicalDuplicates;
+        const auto& channel = compatible ? source.identicalDuplicates->alpha : source.alpha;
         Evaluation local{};
-        output[i] = SampleScalarAlpha(source.alpha, sequence, frame, global, local);
-        if (local.Good()) continue;
+        output[i] = SampleScalarAlpha(channel, sequence, frame, global, local, compatible);
+        if (local.Good()) {
+            if (compatible) {
+                const auto& originals = source.identicalDuplicates->warnings;
+                if (originals.size() > e.diagnostics.size() - e.used || originals.size() > warnings.size() - warningCount) {
+                    e.Fail(Code::CapacityExceeded); return false;
+                }
+                for (const auto& original : originals) {
+                    auto warning = original; warning.diagnosticIndex = e.used;
+                    e.diagnostics[e.used++] = {Code::MaterialAlphaIdenticalDuplicatesPreview, Severity::Warning,
+                        NoIndex, TrackKind::MaterialAlpha, warning.sourceFrame, warning.sourceFrame};
+                    warnings[warningCount++] = warning;
+                }
+            }
+            continue;
+        }
         issue = source.issue; issue.error = MaterialCode(local.error);
         // 运行期边界/数值错误保留原左键的物理身份；不将采样结果伪装成源值。
-        if (source.alpha.error == Code::Ok && !source.sources.empty()) {
-            const auto time = source.alpha.global ? (source.alpha.period ? global % source.alpha.period : 0u) : frame;
-            const auto begin = source.alpha.global ? source.alpha.keys.begin()
-                : std::lower_bound(source.alpha.keys.begin(), source.alpha.keys.end(), sequence.start,
+        if (channel.error == Code::Ok && !source.sources.empty()) {
+            const auto time = channel.global ? (channel.period ? global % channel.period : 0u) : frame;
+            const auto begin = channel.global ? channel.keys.begin()
+                : std::lower_bound(channel.keys.begin(), channel.keys.end(), sequence.start,
                     [](const auto& key, auto t) { return key.frame < t; });
-            const auto stop = source.alpha.global ? source.alpha.keys.end()
-                : std::upper_bound(begin, source.alpha.keys.end(), sequence.end,
+            const auto stop = channel.global ? channel.keys.end()
+                : std::upper_bound(begin, channel.keys.end(), sequence.end,
                     [](auto t, const auto& key) { return t < key.frame; });
             const auto end = std::upper_bound(begin, stop, time,
                 [](auto t, const auto& key) { return t < key.frame; });
             const auto selected = end == begin ? begin : end - 1;
-            const auto index = static_cast<std::size_t>(selected - source.alpha.keys.begin());
+            const auto index = static_cast<std::size_t>(selected - channel.keys.begin());
             const auto& original = source.sources[index]; issue.sourceByteOffset = original.valueOffset;
             issue.sourceFrame = original.frame; issue.sourceValueBits = original.valueBits;
         }

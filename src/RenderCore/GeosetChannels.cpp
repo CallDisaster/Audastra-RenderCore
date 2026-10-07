@@ -3,6 +3,7 @@
 
 #include "GeosetChannels.h"
 #include <algorithm>
+#include <bit>
 #include <cmath>
 namespace War3RenderCore::Detail {
 namespace {
@@ -10,7 +11,8 @@ float Component(float v,std::size_t) { return v; }
 float Component(const Vec3& v,std::size_t c) { return v[c]; }
 template<std::size_t N,class Keys>
 GeoChannel<N> CompileChannel(std::array<float,N> fallback,bool hasTrack,std::uint32_t mode,
-    std::uint32_t global,const Keys& keys,const std::vector<std::uint32_t>& periods) {
+    std::uint32_t global,const Keys& keys,const std::vector<std::uint32_t>& periods,
+    bool identicalDuplicatesPreview = false) {
     GeoChannel<N> out; out.fallback=fallback; out.mode=mode;
     constexpr bool rgb=N==3;
     const auto number=rgb ? Code::GeoaColorInvalid : Code::GeoaNumberInvalid;
@@ -36,7 +38,16 @@ GeoChannel<N> CompileChannel(std::array<float,N> fallback,bool hasTrack,std::uin
                 out.error=number;out.keys.clear();return out;
             }
         }
-        if (!first && key.frame<=previous) { out.error=Code::GeoaKeysInvalid;out.keys.clear();return out; }
+        if (!first && key.frame<=previous) {
+            bool identical = identicalDuplicatesPreview && !out.global && key.frame==previous;
+            if (identical) for (std::size_t c=0;c<N;++c) {
+                const auto& prior=out.keys.back();
+                identical &= std::bit_cast<std::uint32_t>(key.value[c])==std::bit_cast<std::uint32_t>(prior.value[c]);
+                if (mode>=2) identical &= std::bit_cast<std::uint32_t>(key.inTangent[c])==std::bit_cast<std::uint32_t>(prior.inTangent[c])
+                    && std::bit_cast<std::uint32_t>(key.outTangent[c])==std::bit_cast<std::uint32_t>(prior.outTangent[c]);
+            }
+            if (!identical) { out.error=Code::GeoaKeysInvalid;out.keys.clear();return out; }
+        }
         first=false;previous=key.frame;
         key.frame-=origin;
         if (out.global && key.frame>INT32_MAX) { out.error=Code::GeoaGlobalSpanUnsupported;out.keys.clear();return out; }
@@ -46,7 +57,7 @@ GeoChannel<N> CompileChannel(std::array<float,N> fallback,bool hasTrack,std::uin
 }
 template<std::size_t N>
 std::array<float,N> Sample(const GeoChannel<N>& channel,const Sequence& sequence,std::uint32_t frame,
-    std::uint64_t global,Evaluation& e) noexcept {
+    std::uint64_t global,Evaluation& e,bool identicalDuplicatesPreview = false) noexcept {
     if (channel.error!=Code::Ok) { e.Fail(channel.error);return {}; }
     if (channel.global && channel.keys.size()==1) return channel.keys.front().value;
     const auto start=channel.global ? 0u : sequence.start, end=channel.global ? channel.period : sequence.end;
@@ -55,7 +66,8 @@ std::array<float,N> Sample(const GeoChannel<N>& channel,const Sequence& sequence
     const auto stop=channel.global ? channel.keys.end() : std::upper_bound(begin,channel.keys.end(),end,[](auto t,const auto& k) { return t<k.frame; });
     if (begin==stop) return channel.fallback;
     // 1.27a 789EB0/77AA80/77AAA0：当前动作只有一键时直接取值，即使尚未到该帧。
-    if (!channel.global && stop-begin==1) return begin->value;
+    if (!channel.global && (stop-begin==1 || (identicalDuplicatesPreview && begin->frame==(stop-1)->frame)))
+        return begin->value; // 合资格的普通同帧同值组等价于单时点，原键仍全数拥有。
     const auto right=std::upper_bound(begin,stop,time,[](auto t,const auto& k) { return t<k.frame; });
     if (right==begin) { e.Fail(Code::GeoaBoundaryUnsupported);return {}; }
     const auto& left=*(right-1);
@@ -77,13 +89,13 @@ std::array<float,N> Sample(const GeoChannel<N>& channel,const Sequence& sequence
 }
 }
 Alpha CompileMaterialScalarAlpha(const War3Map::Render::MdxLayer& source,
-    const std::vector<std::uint32_t>& periods) {
+    const std::vector<std::uint32_t>& periods, bool identicalDuplicatesPreview) {
     return CompileChannel<1>({source.alpha}, source.animatedAlpha, source.alphaInterpolation,
-        source.alphaGlobalSequence, source.alphaKeys, periods);
+        source.alphaGlobalSequence, source.alphaKeys, periods, identicalDuplicatesPreview);
 }
 float SampleScalarAlpha(const Alpha& channel, const Sequence& sequence, std::uint32_t frame,
-    std::uint64_t global, Evaluation& e) noexcept {
-    return Sample(channel, sequence, frame, global, e)[0];
+    std::uint64_t global, Evaluation& e, bool identicalDuplicatesPreview) noexcept {
+    return Sample(channel, sequence, frame, global, e, identicalDuplicatesPreview)[0];
 }
 Alpha CompileGeosetAlpha(const std::optional<War3Map::Render::MdxGeosetAnimation>& source,const std::vector<std::uint32_t>& periods) {
     Alpha out;out.fallback={1};

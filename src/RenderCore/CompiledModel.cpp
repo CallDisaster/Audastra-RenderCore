@@ -298,9 +298,15 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
             const auto& layer = material.layers[l];
             // 原始键上限已在scalar编译中诊断；预算在reserve前计入实际所有者。
             budget.Charge(layer.alphaKeys.size(), sizeof(GeoKey<1>) + sizeof(MaterialKeySource));
+            if (const auto bytes = MaterialAlphaDuplicateStorageBytes(layer, material.hasUninterpretedData))
+                budget.Charge(1, bytes);
             const MaterialLayerLayout layout{m, l, layer.animatedAlpha ? layer.alphaSourceByteOffset : layer.staticAlphaByteOffset};
             out->materialLayouts.push_back(layout);
             out->materialAlphas.push_back(CompileMaterialAlpha(layer, material.hasUninterpretedData, layout, model.globalSequences));
+            if (const auto& prepared = out->materialAlphas.back().identicalDuplicates) {
+                Require(prepared->warnings.size() <= UINT32_MAX - out->materialDuplicateWarnings, Code::MaterialAlphaLimit);
+                out->materialDuplicateWarnings += static_cast<std::uint32_t>(prepared->warnings.size());
+            }
             out->animatedMaterialAlpha |= layer.animatedAlpha;
         }
     }

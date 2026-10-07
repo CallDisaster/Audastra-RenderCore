@@ -3,6 +3,7 @@
 
 #include "War3MapCore/Render/MdxModel.h"
 #include "MdxNodeRead.h"
+#include "MdxPremRead.h"
 #include "MdxRigidStaticPreviewInternal.h"
 
 #include <algorithm>
@@ -517,7 +518,7 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
                 || tag == "EVTS" || tag == "CLID") {
                 if (model.version != kClassicVersion) Fail("MDX_VERSION_UNSUPPORTED", "公共节点之前缺少版本 800。");
                 if (tag == "ATCH") ParseSizedNodes(chunk, model, limits, totalBoneKeys, MdxNodeKind::Attachment, 264, "ATCH");
-                else if (tag == "PREM") ParseSizedNodes(chunk, model, limits, totalBoneKeys, MdxNodeKind::ParticleEmitter, 284, "PREM");
+                else if (tag == "PREM") ParsePremEmitters(chunk, model, limits, totalBoneKeys);
                 else if (tag == "PRE2") ParseSizedNodes(chunk, model, limits, totalBoneKeys, MdxNodeKind::ParticleEmitter2, 171, "PRE2");
                 else if (tag == "RIBB") ParseSizedNodes(chunk, model, limits, totalBoneKeys, MdxNodeKind::Ribbon, 52, "RIBB");
                 else if (tag == "EVTS") ParseEvents(chunk, model, limits, totalBoneKeys);
@@ -547,6 +548,7 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
                 Fail("MDX_REFERENCE_INVALID", "节点轨迹引用了不存在的全局序列。");
         };
         ForEachMdxNode(model, checkTracks);
+        FinalizePremEmitters(model);
         model.skinningTopologyComplete = true;
         const auto incomplete = [&](std::string reason) {
             if (model.skinningTopologyComplete) model.skinningTopologyIssue = std::move(reason);
@@ -595,6 +597,7 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
             if (duplicate) geoset.animation->hasUninterpretedData = true;
         }
         auto result = Result<MdxModel>::Success(std::move(model));
+        AppendPremDiagnostics(result);
         for (std::size_t index = 0; index < result.value->sequences.size(); ++index) {
             const auto& sequence = result.value->sequences[index];
             if (!sequence.Usable()) result.diagnostics.push_back({DiagnosticSeverity::Warning, kSubsystem,

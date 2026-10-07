@@ -84,6 +84,7 @@ DiagnosticText Text(Code code) noexcept {
     case Code::MaterialAlphaBoundaryUnsupported: return {"MDX_MATERIAL_ALPHA_BOUNDARY_UNSUPPORTED", "KMTA采样边界尚不支持，不补默认透明度。"};
     case Code::MaterialAlphaGlobalSpanUnsupported: return {"MDX_MATERIAL_ALPHA_GLOBAL_SPAN_UNSUPPORTED", "KMTA归零帧跨度超过已界定有符号范围。"};
     case Code::MaterialAlphaLimit: return {"MDX_MATERIAL_ALPHA_LIMIT", "KMTA轨迹或层数量超过有界预算。"};
+    case Code::MaterialAlphaIdenticalDuplicatesPreview: return {"MDX_MATERIAL_ALPHA_IDENTICAL_DUPLICATES_PREVIEW", "普通KMTA含同帧同值原键；采用显式兼容预览，原键和严格默认保留，未确认原版缓存等价。"};
     case Code::MaterialTextureUninterpreted: return {"MDX_MATERIAL_TEXTURE_UNINTERPRETED", "KMTF层含重复轨迹、未知尾部、TXAN或未支持的UV组；不回退静态成功。"};
     case Code::MaterialTextureInterpolationUnsupported: return {"MDX_MATERIAL_TEXTURE_INTERPOLATION_UNSUPPORTED", "KMTF插值编号未知（仅0..3按整数阶梯预览）；不对贴图ID做浮点插值。"};
     case Code::MaterialTextureGlobalSequenceUnsupported: return {"MDX_MATERIAL_TEXTURE_GLOBAL_SEQUENCE_UNSUPPORTED", "KMTF全局序列引用不存在。"};
@@ -106,6 +107,9 @@ std::string DescribeDiagnostic(const PoseDiagnostic& diagnostic) {
     const char* track = diagnostic.track == TrackKind::Translation ? "KGTR"
         : diagnostic.track == TrackKind::Scale ? "KGSC" : "KGRT";
     switch (diagnostic.code) {
+    case Code::MaterialAlphaIdenticalDuplicatesPreview:
+        return "KMTA 在源帧 " + std::to_string(diagnostic.leftFrame)
+            + " 含同帧同值键；采用显式兼容预览，保留原键；材质/层与原偏移见独立typed来源记录，未确认原版缓存等价。";
     case Code::NodeSourceOrderPreview:
         return Detail::DescribeSourceOrderNodePreview(track, diagnostic.objectId, diagnostic.leftFrame, diagnostic.rightFrame);
     case Code::NodeSourceOrderKeyLimit:

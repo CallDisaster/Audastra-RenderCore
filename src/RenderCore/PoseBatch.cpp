@@ -54,6 +54,12 @@ struct TextureBatchData {
     std::vector<MaterialLayerIssue> issues;
     std::uint64_t storageBytes = 0;
 };
+// 独立所有者，旧MaterialBatchData/默认Create的sizeof与容量合同保持不变。
+struct MaterialAlphaPreviewBatchData {
+    std::vector<MaterialAlphaPreviewWarning> warnings;
+    std::vector<Range32> ranges;
+    std::uint64_t storageBytes = 0;
+};
 } // namespace Detail
 namespace {
 using namespace Detail;
@@ -328,6 +334,47 @@ War3Map::Result<PoseBatchEvaluator> PoseBatchEvaluator::Create(
     catch (const std::length_error&) { return failure(Code::AllocationFailed); }
 }
 
+War3Map::Result<PoseBatchEvaluator> PoseBatchEvaluator::Create(
+    std::span<const CompiledModel> assets, std::uint64_t evaluationEpoch, BatchLimits limits,
+    GeosetFailurePolicy policy, MaterialChannelOptions materials, TextureChannelOptions textures,
+    std::span<const CompiledMaterialTextures> textureAssets, NodeKeySamplingPolicy nodeKeys,
+    MaterialAlphaKeySamplingPolicy materialAlphaKeys) {
+    const auto failure = [](Code code) {
+        return War3Map::Result<PoseBatchEvaluator>::Failure("RenderCore.Prepare", CodeName(code), CodeMessage(code));
+    };
+    if (materialAlphaKeys != MaterialAlphaKeySamplingPolicy::Strict
+        && materialAlphaKeys != MaterialAlphaKeySamplingPolicy::IdenticalDuplicatesPreview)
+        return failure(Code::RequestInvalid);
+    if (materialAlphaKeys == MaterialAlphaKeySamplingPolicy::IdenticalDuplicatesPreview && !materials.enabled)
+        return failure(Code::RequestInvalid);
+    auto result = Create(assets, evaluationEpoch, limits, policy, materials, textures, textureAssets, nodeKeys);
+    if (!result.Succeeded() || materialAlphaKeys == MaterialAlphaKeySamplingPolicy::Strict) return result;
+    std::uint32_t warningsPerInstance = 0;
+    for (const auto& asset : assets)
+        warningsPerInstance = std::max(warningsPerInstance, ModelAccess::Get(asset)->materialDuplicateWarnings);
+    const auto extraCount = static_cast<std::uint64_t>(warningsPerInstance) * limits.maxInstances;
+    const auto count = result.value->data_->diagnostics.size() + extraCount;
+    const auto extraBytes = extraCount * sizeof(PoseDiagnostic);
+    const auto warningBytes = sizeof(MaterialAlphaPreviewBatchData) + extraCount * sizeof(MaterialAlphaPreviewWarning)
+        + static_cast<std::uint64_t>(limits.maxInstances) * sizeof(Range32);
+    if (count > UINT32_MAX || result.value->StorageBytes() > limits.maxBytes
+        || extraBytes > limits.maxBytes - result.value->StorageBytes()
+        || warningBytes > limits.maxBytes - result.value->StorageBytes() - extraBytes) return failure(Code::CapacityExceeded);
+    try {
+        // 新工作区独立构造，避免resize的几何增长隐含扩大最后的拥有容量。
+        std::vector<PoseDiagnostic> diagnostics(static_cast<std::size_t>(count));
+        auto warnings = std::make_unique<MaterialAlphaPreviewBatchData>();
+        warnings->warnings.resize(static_cast<std::size_t>(extraCount)); warnings->ranges.resize(limits.maxInstances);
+        warnings->storageBytes = warningBytes;
+        result.value->data_->diagnostics = std::move(diagnostics);
+        result.value->data_->storageBytes += extraBytes;
+        result.value->materialAlphaPreview_ = std::move(warnings);
+        result.value->materialAlphaKeys_ = materialAlphaKeys;
+        return result;
+    } catch (const std::bad_alloc&) { return failure(Code::AllocationFailed); }
+    catch (const std::length_error&) { return failure(Code::AllocationFailed); }
+}
+
 BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
     std::span<const GroupMatrix> externalGroups, std::span<const BoneOverride> overrides) noexcept {
     if (!data_) return {Code::RequestInvalid, 0, 0};
@@ -361,7 +408,7 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         if (identities[i] == identities[i - 1]) return {Code::DuplicateInstance, 0, 0};
 
     std::uint64_t sourceOrderKeyBudget = MaxSourceOrderKeyVisits;
-    std::uint32_t nodeOffset = 0, groupOffset = 0, alphaOffset = 0, layerOffset = 0, diagnosticOffset = 0, failed = 0;
+    std::uint32_t nodeOffset = 0, groupOffset = 0, alphaOffset = 0, layerOffset = 0, diagnosticOffset = 0, warningOffset = 0, failed = 0;
     for (std::size_t i = 0; i < requests.size(); ++i) {
         const auto& r = requests[i];
         const auto* asset = r.assetIndex < data.assets.size() ? &data.assets[r.assetIndex] : nullptr;
@@ -371,8 +418,16 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         const auto layerCount = asset && (materials_ || textures_) ? asset->MaterialLayerCount() : 0;
         if (materials_) { materials_->ranges[i] = {}; materials_->issues[i] = {}; }
         if (textures_) { textures_->ranges[i] = {}; textures_->issues[i] = {}; }
+        if (materialAlphaPreview_) materialAlphaPreview_->ranges[i] = {};
         // 源序预览最多另加每TRS通道一条；旧严格入口容量公式不变。
-        const auto diagnosticCapacity = (nodeKeys_ == NodeKeySamplingPolicy::SourceOrderPreview ? 7u : 4u) * nodeCount + 1;
+        const auto materialWarnings = asset && materialAlphaKeys_ == MaterialAlphaKeySamplingPolicy::IdenticalDuplicatesPreview
+            ? ModelAccess::Get(*asset)->materialDuplicateWarnings : 0;
+        const auto diagnosticCapacity = (nodeKeys_ == NodeKeySamplingPolicy::SourceOrderPreview ? 7u : 4u) * nodeCount
+            + 1 + materialWarnings;
+        std::uint32_t materialWarningCount = 0;
+        const auto materialWarningStorage = materialAlphaPreview_
+            ? std::span(materialAlphaPreview_->warnings).subspan(warningOffset, materialWarnings)
+            : std::span<MaterialAlphaPreviewWarning>{};
         PoseReceipt receipt;
         receipt.instance = r.instance; receipt.asset = r.asset; receipt.source = r.source;
         receipt.evaluationEpoch = data.epoch;
@@ -391,7 +446,8 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         if (e.Good() && materials_) {
             const auto& model = *ModelAccess::Get(*asset);
             (void)EvaluateMaterialAlphas(model, model.sequences[r.sequenceIndex], receipt.sequenceFrame, r.globalElapsedMs,
-                std::span(materials_->alphas).subspan(layerOffset, layerCount), materials_->issues[i], e);
+                std::span(materials_->alphas).subspan(layerOffset, layerCount), materials_->issues[i], e,
+                materialAlphaKeys_, materialWarningStorage, materialWarningCount);
         }
         if (e.Good() && textures_) {
             const auto& source = *MaterialTextureAccess::Get(textures_->assets[r.assetIndex]);
@@ -412,10 +468,12 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         data.receipts[i] = receipt;
         if (materials_ && e.Good()) materials_->ranges[i] = {layerOffset, layerCount};
         if (textures_ && e.Good()) textures_->ranges[i] = {layerOffset, layerCount};
+        if (materialAlphaPreview_ && e.Good()) materialAlphaPreview_->ranges[i] = {warningOffset, materialWarningCount};
         if (preview_) preview_->ranges[i] = {alphaOffset, issueCount};
         nodeOffset += nodeCount; groupOffset += groupCount; alphaOffset += alphaCount;
         layerOffset += layerCount;
         diagnosticOffset += diagnosticCapacity;
+        warningOffset += materialWarnings;
     }
     data.active = static_cast<std::uint32_t>(requests.size());
     return {Code::Ok, data.active, failed};
@@ -486,7 +544,7 @@ BatchOutcome PoseBatchEvaluator::EvaluateExternalFrames(std::span<const External
 
 std::uint64_t PoseBatchEvaluator::StorageBytes() const noexcept {
     return data_ ? data_->storageBytes + (preview_ ? preview_->storageBytes : 0) + (materials_ ? materials_->storageBytes : 0)
-        + (textures_ ? textures_->storageBytes : 0) : 0;
+        + (textures_ ? textures_->storageBytes : 0) + (materialAlphaPreview_ ? materialAlphaPreview_->storageBytes : 0) : 0;
 }
 
 std::span<const PoseReceipt> PoseBatchEvaluator::Receipts() const noexcept {
@@ -525,6 +583,11 @@ std::span<const float> PoseBatchEvaluator::LayerAlphas(std::uint32_t index) cons
 std::span<const MaterialLayerIssue> PoseBatchEvaluator::MaterialIssues(std::uint32_t index) const noexcept {
     if (!data_ || !materials_ || index >= data_->active || materials_->issues[index].error == Code::Ok) return {};
     return std::span<const MaterialLayerIssue>(materials_->issues).subspan(index, 1);
+}
+std::span<const MaterialAlphaPreviewWarning> PoseBatchEvaluator::MaterialAlphaPreviewWarnings(std::uint32_t index) const noexcept {
+    if (!data_ || !materialAlphaPreview_ || index >= data_->active || data_->receipts[index].error != Code::Ok) return {};
+    const auto range = materialAlphaPreview_->ranges[index];
+    return std::span<const MaterialAlphaPreviewWarning>(materialAlphaPreview_->warnings).subspan(range.offset, range.count);
 }
 bool PoseBatchEvaluator::TextureChannelsEnabled() const noexcept { return textures_ != nullptr; }
 std::span<const std::uint32_t> PoseBatchEvaluator::LayerTextureIds(std::uint32_t index) const noexcept {

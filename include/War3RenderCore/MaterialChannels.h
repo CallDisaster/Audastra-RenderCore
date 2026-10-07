@@ -18,6 +18,15 @@ struct MaterialLayerIssue {
 struct MaterialChannelOptions {
     std::uint32_t enabled = 0, maxLayerValues = 8192;
 };
+// 仅显式KMTA兼容预览发布；不扩张默认PoseDiagnostic/MaterialBatchData存储。
+// diagnosticIndex是同一成功实例的Diagnostics借用Span内索引，不是节点objectId。
+struct alignas(8) MaterialAlphaPreviewWarning {
+    std::uint32_t diagnosticIndex = NoIndex;
+    std::uint32_t materialIndex = NoIndex, layerIndex = NoIndex, interpolation = 0;
+    std::uint64_t leftSourceByteOffset = 0, rightSourceByteOffset = 0;
+    std::uint32_t sourceFrame = 0, sourceValueBits = 0, inTangentBits = 0, outTangentBits = 0;
+};
 static_assert(sizeof(MaterialLayerLayout) == 16 && sizeof(MaterialLayerIssue) == 32);
 static_assert(sizeof(MaterialChannelOptions) == 8 && std::is_trivially_copyable_v<MaterialLayerIssue>);
+static_assert(sizeof(MaterialAlphaPreviewWarning) == 48 && std::is_trivially_copyable_v<MaterialAlphaPreviewWarning>);
 }
