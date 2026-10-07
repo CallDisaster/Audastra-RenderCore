@@ -202,7 +202,8 @@ std::string Environment(const char* name) {
 #endif
 }
 std::vector<std::byte> File(const std::string& path, std::uintmax_t expectedSize) {
-    const auto source = std::filesystem::u8path(path); const auto size = std::filesystem::file_size(source);
+    const std::filesystem::path source(std::u8string(path.begin(), path.end()));
+    const auto size = std::filesystem::file_size(source);
     const auto time = std::filesystem::last_write_time(source); Check(size == expectedSize, "真实夹具大小不符");
     std::ifstream input(source, std::ios::binary); Check(static_cast<bool>(input), "真实夹具不可读");
     std::vector<std::byte> bytes(static_cast<std::size_t>(size));
