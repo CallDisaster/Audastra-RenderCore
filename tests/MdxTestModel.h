@@ -44,6 +44,7 @@ struct Options {
     std::uint32_t layerTexture = 1;
     bool animatedHelper = false;
     bool truncate = false;
+    bool duplicateGeoa = false;       // 为 geoset 1 追加第二条不带轨迹、透明度 1 的 GEOA
     std::uint32_t selectionGroup = 0, selectionFlags = 0;
 };
 
@@ -102,6 +103,10 @@ inline std::vector<std::byte> BuildTestMdx(const Options& options = {}) {
         const auto animation = w.Begin(); w.F32(1); w.U32(0); w.F32(1); w.F32(1); w.F32(1); w.U32(1);
         w.Tag("KGAO"); w.U32(2); w.U32(0); w.U32(0xFFFFFFFF); w.U32(0); w.F32(0); w.U32(2000); w.F32(1);
         w.EndInclusive(animation);
+        if (options.duplicateGeoa) {
+            const auto later = w.Begin(); w.F32(1); w.U32(0); w.F32(1); w.F32(1); w.F32(1); w.U32(1);
+            w.EndInclusive(later);
+        }
         w.EndChunk(at); }
     w.Tag("BONE"); { const auto at = w.Begin();
         const auto node = w.Begin(); w.Fixed("Geometry", 80); w.U32(0);

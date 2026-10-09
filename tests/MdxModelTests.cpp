@@ -74,6 +74,21 @@ void TestParse() {
     Require(model.skippedChunks == 1, "未解释块按大小跳过");
 }
 
+// 同一 geoset 的第二条 GEOA 覆盖第一条：geoset 保持可见并按后者求值，同时报告重复。
+void TestDuplicateGeosetAnimation() {
+    Options options; options.duplicateGeoa = true;
+    const auto result = ParseMdx(BuildTestMdx(options));
+    if (!result.Succeeded()) throw std::runtime_error("重复 GEOA 的合成模型解析失败：" + result.diagnostics.front().message);
+    const auto& geoset = result.value->geosets[1];
+    Require(geoset.visibleInStand && geoset.animation && !geoset.animation->hasAlphaTrack
+        && !geoset.animation->hasUninterpretedData, "后一条 GEOA 生效，不当作未解释数据");
+    const auto standAlpha = SampleMdxGeosetAlpha(*result.value, {1, 1, 500, 0});
+    Require(standAlpha.Succeeded() && *standAlpha.value == 1.0f, "按后一条 GEOA 求值");
+    Require(std::any_of(result.diagnostics.begin(), result.diagnostics.end(), [](const auto& item) {
+        return item.code == "MDX_GEOA_DUPLICATE" && item.message.find("geoset=1") != std::string::npos;
+    }), "报告被覆盖的 geoset");
+}
+
 void TestRejections() {
     auto bytes = Build(); bytes[0] = std::byte{'X'};
     Rejected(bytes, "MDX_MAGIC");
@@ -653,6 +668,7 @@ void TestRigidStaticAsset(const std::string& filename) {
 int main(int argc, char** argv) {
     try {
         TestParse();
+        TestDuplicateGeosetAnimation();
         TestRejections();
         TestBones();
         TestBoneRejections();

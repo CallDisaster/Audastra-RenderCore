@@ -588,15 +588,22 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
                 if (!nodes.contains(objectId)) incomplete("MATS 引用了未解析的节点对象 ID。");
         }
         const auto stand = StandSequence(model);
+        // 同一 geoset 有多条 GEOA 时按文件顺序后者生效（合并动作的模型常追加覆盖全部动作的新条目），
+        // 并逐个报告被覆盖的 geoset；不把整块几何体当作未解释数据隐藏。
+        std::vector<std::uint32_t> overridden;
         for (const auto& animation : animations) {
             if (animation.geosetId >= model.geosets.size()) Fail("MDX_REFERENCE_INVALID", "geoset 动画引用了不存在的 geoset。");
             auto& geoset = model.geosets[animation.geosetId];
-            const bool duplicate = geoset.animation.has_value();
+            if (geoset.animation.has_value()
+                && std::find(overridden.begin(), overridden.end(), animation.geosetId) == overridden.end())
+                overridden.push_back(animation.geosetId);
             geoset.visibleInStand = StandAlpha(animation.value, stand) > 0.0f;
             geoset.animation = animation.value;
-            if (duplicate) geoset.animation->hasUninterpretedData = true;
         }
         auto result = Result<MdxModel>::Success(std::move(model));
+        for (const auto geosetId : overridden)
+            result.diagnostics.push_back({DiagnosticSeverity::Warning, kSubsystem, "MDX_GEOA_DUPLICATE",
+                "geoset=" + std::to_string(geosetId) + "：有多条 GEOA，按文件顺序使用最后一条。", std::nullopt});
         AppendPremDiagnostics(result);
         for (std::size_t index = 0; index < result.value->sequences.size(); ++index) {
             const auto& sequence = result.value->sequences[index];
