@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 CallDisaster
+#include "War3RenderCore/GameKeyRanges.h"
 #include "War3RenderCore/PoseBatch.h"
 #include "War3MapCore/Render/MdxPose.h"
 #include "SourceOrderPreviewFixture.h"
@@ -168,6 +169,18 @@ void GameRanges() {
         const auto b = Compare(m, Request(1, 50), mode);
         Require(Node(b.nodes, 45).translation[0] == 40, "overlapping action lost keys taken by the previous one");
     }
+    // 已确认不降序的区间：二分快路径与原版线性扫描逐时刻一致（含同帧、首键前与末键后）。
+    struct FrameKey { std::int32_t frame; };
+    const std::vector<FrameKey> sorted{{0}, {5}, {100}, {100}, {100}, {250}, {250}, {300}, {999}};
+    for (std::int64_t time = -3; time <= 1003; ++time)
+        for (const std::size_t offset : {std::size_t{0}, std::size_t{2}}) {
+            const auto count = sorted.size() - offset;
+            const auto linear = War3RenderCore::SelectGameKeyWindow(sorted, offset, count, 0, 1000, time);
+            const auto fast = War3RenderCore::SelectGameKeyWindow(sorted, offset, count, 0, 1000, time, true);
+            Require(linear.kind == fast.kind && linear.left == fast.left && linear.right == fast.right
+                && linear.offset == fast.offset && linear.span == fast.span && linear.seam == fast.seam,
+                "ascending fast path differs from ordered scan");
+        }
     m.sequences = {{"Late", 300, 400, 1}, {"Early", 100, 200, 1}};
     for (const auto mode : {NodeKeySamplingPolicy::Strict, NodeKeySamplingPolicy::SourceOrderPreview}) {
         const auto late = Compare(m, Request(0, 50), mode);

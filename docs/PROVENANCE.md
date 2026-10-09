@@ -5,7 +5,7 @@
 
 ## 0.1.12 原序节点预览增补（2026-10-07）
 
-`NodeKeySamplingPolicy.h`、`SourceOrderNodeTrack.h` 与对应 API/诊断/预热接线由本项目原创。
+`NodeKeySamplingPolicy.h`、`SourceOrderNodeTrack.h`、`GameKeyRanges.h`（0.1.16 公开，依据 IDA 反汇编原创编写）与对应 API/诊断/预热接线由本项目原创。
 `SourceOrderPreviewFixture.h` 为原创空几何 MDX 字节夹具，数值独立编写；真实本机模型仅
 通过环境变量及固定地图/模型 SHA 门禁测试，不在源码或包中包含。
 接口/算法/测试的来源和等价边界详见 `SOURCE_ORDER_NODE_PREVIEW.md`。第三方公开读取器
