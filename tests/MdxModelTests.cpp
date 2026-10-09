@@ -220,15 +220,15 @@ void TestHelperAndSkinningTopology() {
     const auto unbracketedAlpha = ParseMdx(linearBytes);
     Require(unbracketedAlpha.Succeeded() && unbracketedAlpha.value, "线性 KGAO 模型可解析");
     // 原键为 (0, 0)/(2000, 1)；Stand 只有 0..1000，按原版单键常量，不借 Death 键。
-    const auto constantAlpha = SampleMdxGeosetAlpha(*unbracketedAlpha.value, {1, 1, 500, 0});
+    const auto constantAlpha = SampleMdxGeosetAlpha(*unbracketedAlpha.value, {1, 0, 500, 0});
     Require(constantAlpha.Succeeded() && constantAlpha.value && *constantAlpha.value == 0,
         "普通动作单键 KGAO 必须取当前动作的键值");
     // 第二键移到 Stand 末端：alpha = (t - 0) / (1000 - 0)，结果可精确表示。
     PatchAfterTag(linearBytes, "KGAO", 24, 1000);
     const auto linearAlpha = ParseMdx(linearBytes);
     Require(linearAlpha.Succeeded() && linearAlpha.value, "动作内双键线性 KGAO 可解析");
-    const auto quarterAlpha = SampleMdxGeosetAlpha(*linearAlpha.value, {1, 1, 250, 0});
-    const auto midpointAlpha = SampleMdxGeosetAlpha(*linearAlpha.value, {1, 1, 500, 0});
+    const auto quarterAlpha = SampleMdxGeosetAlpha(*linearAlpha.value, {1, 0, 250, 0});
+    const auto midpointAlpha = SampleMdxGeosetAlpha(*linearAlpha.value, {1, 0, 500, 0});
     Require(quarterAlpha.Succeeded() && *quarterAlpha.value == 0.25f
         && midpointAlpha.Succeeded() && *midpointAlpha.value == 0.5f,
         "线性 KGAO 按动作内两键插值，不能退化为阶梯值");
@@ -288,7 +288,7 @@ void TestParsedPoseChain() {
     Options options; options.animatedHelper = true;
     const auto parsed = ParseMdx(Build(options));
     Require(parsed.Succeeded(), "合成动画模型解析");
-    const auto sampled = SampleMdxNodePose(*parsed.value, {1, 500, 0, 0, {}});
+    const auto sampled = SampleMdxNodePose(*parsed.value, {0, 500, 0, 0, {}});
     if (!sampled.Succeeded()) throw std::runtime_error("已解析节点姿态失败：" + sampled.diagnostics.front().message);
     Require(sampled.value->sequenceFrame == 500 && sampled.value->chain.size() == 2
         && sampled.value->chain[0].objectId == 1 && sampled.value->chain[1].objectId == 0,
@@ -444,8 +444,8 @@ void TestParsedRigidSkinning() {
     const auto parsed = ParseMdx(Build(options));
     Require(parsed.Succeeded(), "合成动画模型解析");
     const auto& model = *parsed.value;
-    const auto first = SampleMdxRigidSkinnedGeoset(model, {0, 1, 0, 0, {}});
-    const auto middle = SampleMdxRigidSkinnedGeoset(model, {0, 1, 500, 0, {}});
+    const auto first = SampleMdxRigidSkinnedGeoset(model, {0, 0, 0, 0, {}});
+    const auto middle = SampleMdxRigidSkinnedGeoset(model, {0, 0, 500, 0, {}});
     Require(first.Succeeded() && middle.Succeeded(), "单节点矩阵组应能求出 CPU 顶点姿态");
     Require(first.value->positions.size() == 4 && middle.value->normals.size() == 4
         && middle.value->sequenceFrame == 500, "蒙皮结果与原始顶点一一对应");
@@ -460,17 +460,17 @@ void TestParsedRigidSkinning() {
         {{0, {2, 0, 0}, {}, {}}}};
     multi.geosets[0].matrixGroupSizes = {2};
     multi.geosets[0].matrixIndices = {0, 1};
-    const auto blended = SampleMdxRigidSkinnedGeoset(multi, {0, 1, 500, 0, {}});
+    const auto blended = SampleMdxRigidSkinnedGeoset(multi, {0, 0, 500, 0, {}});
     Require(blended.Succeeded() && blended.value->positions.size() == 4,
         "多节点矩阵组按原版组矩阵平均后求值");
     Near(blended.value->positions[0][0], 6, "骨骼移动 7、父 HELP 移动 5，组矩阵平均后为 6");
     auto unsupported = model;
     unsupported.skinningTopologyComplete = false;
     unsupported.skinningTopologyIssue = "测试缺口";
-    SkinRejected(unsupported, {0, 1, 500, 0, {}}, "MDX_SKIN_TOPOLOGY_INCOMPLETE");
+    SkinRejected(unsupported, {0, 0, 500, 0, {}}, "MDX_SKIN_TOPOLOGY_INCOMPLETE");
     unsupported = model;
     unsupported.helpers[0].flags = 0x8;
-    const auto staticBillboard = SampleMdxRigidSkinnedGeoset(unsupported, {0, 1, 500, 0, {}});
+    const auto staticBillboard = SampleMdxRigidSkinnedGeoset(unsupported, {0, 0, 500, 0, {}});
     Require(staticBillboard.Succeeded() && HasWarning(staticBillboard, "MDX_POSE_CAMERA_STATIC_PREVIEW"),
         "蒙皮缺相机时不丢顶点，且透传静态预览诊断");
 }

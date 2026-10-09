@@ -44,7 +44,7 @@ add_executable(war3-render-source-order-tests
     "${_render_core_repo}/tests/RenderCoreAllocProbe.cpp")
 target_link_libraries(war3-render-source-order-tests PRIVATE War3RenderCore::CPU)
 war3_render_core_options(war3-render-source-order-tests)
-foreach(_source_order_group IN ITEMS source-order boundaries budgets)
+foreach(_source_order_group IN ITEMS source-order boundaries budgets game-ranges)
     add_test(NAME render-source-order-${_source_order_group}
         COMMAND war3-render-source-order-tests ${_source_order_group})
     set_tests_properties(render-source-order-${_source_order_group} PROPERTIES TIMEOUT 60)

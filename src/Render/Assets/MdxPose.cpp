@@ -123,29 +123,40 @@ std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxN
     std::vector<const MdxNodeKey<N>*> keys;
     keys.reserve(track.keys.size());
     const bool global = track.globalSequence != UINT32_MAX;
-    bool sourceOrder = false;
-    std::int64_t previous = std::numeric_limits<std::int64_t>::min();
-    for (const auto& key : track.keys) {
-        if (key.frame < previous && (global || (key.frame <= time.end && previous >= time.start))) {
-            if (global || nodeKeys != War3RenderCore::NodeKeySamplingPolicy::SourceOrderPreview)
-                Fail("MDX_POSE_KEYS_INVALID", "本次节点采样触及逆序帧区间；未实现原版逆序缓存语义，同帧按源序保留。");
-            sourceOrder = true;
+    std::size_t rangeFirst = 0, rangeCount = track.keys.size();
+    if (global) {
+        std::int64_t previous = std::numeric_limits<std::int64_t>::min();
+        for (const auto& key : track.keys) {
+            if (key.frame < previous)
+                Fail("MDX_POSE_KEYS_INVALID", "全局轨迹含逆序帧；原版全局时钟按升序键查找，未支持逆序。");
+            previous = key.frame;
+            if (static_cast<std::int64_t>(key.frame) - track.keys.front().frame > INT32_MAX)
+                Fail("MDX_POSE_GLOBAL_SPAN_UNSUPPORTED", "全局轨迹归零后的帧跨度超出已确认的有符号范围。");
         }
-        previous = key.frame;
-        if (global && static_cast<std::int64_t>(key.frame) - track.keys.front().frame > INT32_MAX)
-            Fail("MDX_POSE_GLOBAL_SPAN_UNSUPPORTED", "全局轨迹归零后的帧跨度超出已确认的有符号范围。");
-        if (global || (key.frame >= time.start && key.frame <= time.end)) keys.push_back(&key);
+    } else {
+        // 与核心编译共用原版逐动作区间；不按时间筛键。
+        const auto sequenceIndex = static_cast<std::size_t>(&sequence - model.sequences.data());
+        War3RenderCore::Detail::ForEachGameSequenceRange(track.keys, model.sequences,
+            [&](std::size_t index, std::size_t first, std::size_t count) {
+                if (index != sequenceIndex) return true;
+                rangeFirst = first; rangeCount = count; return false;
+            });
     }
+    std::int64_t reverseLeft = 0, reverseRight = 0;
+    const bool sourceOrder = !global && War3RenderCore::Detail::FirstDescendingEdge(
+        track.keys, rangeFirst, rangeCount, reverseLeft, reverseRight);
+    if (sourceOrder && nodeKeys != War3RenderCore::NodeKeySamplingPolicy::SourceOrderPreview)
+        Fail("MDX_POSE_KEYS_INVALID", "本次动作的节点按键区间含逆序帧；严格模式不接受，世界预览按原版顺序查找。");
+    for (std::size_t i = rangeFirst; i < rangeFirst + rangeCount; ++i) keys.push_back(&track.keys[i]);
     const MdxNodeKey<N>* leftKey = nullptr;
     const MdxNodeKey<N>* rightKey = nullptr;
     std::int64_t delta = 0, interval = 0;
     bool outside = false;
     if (sourceOrder) {
-        const auto window = War3RenderCore::Detail::SelectSourceOrderNodeWindow(
-            track.keys, time.start, time.end, time.frame);
+        const auto window = War3RenderCore::Detail::SelectGameKeyWindow(
+            track.keys, rangeFirst, rangeCount, time.start, time.end, time.frame);
         PreviewWarning(warnings, "MDX_POSE_SOURCE_ORDER_PREVIEW",
-            War3RenderCore::Detail::DescribeSourceOrderNodePreview(trackName, objectId,
-                window.reverseLeft, window.reverseRight));
+            War3RenderCore::Detail::DescribeSourceOrderNodePreview(trackName, objectId, reverseLeft, reverseRight));
         if (window.kind == War3RenderCore::Detail::SourceOrderWindowKind::Empty) return fallback;
         if (window.kind == War3RenderCore::Detail::SourceOrderWindowKind::Value) {
             CheckFinite(track.keys[window.left].value);
@@ -164,7 +175,7 @@ std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxN
         outside = found == keys.begin() || found == keys.end();
         leftKey = outside ? keys.back() : *(found - 1);
         rightKey = outside ? keys.front() : *found;
-        // 严格参考接缝保持原合同；普通逆序新增选择仅由上面共享helper完成。
+        // 单调区间二分与原版顺序查找结果相同；逆序区间由上面共享 helper 处理。
         delta = time.frame - (found == keys.begin() ? keys.front()->frame : leftKey->frame);
         interval = static_cast<std::int64_t>(rightKey->frame) - leftKey->frame;
         if (interval < 0) interval += static_cast<std::int64_t>(sequence.end) - sequence.start;

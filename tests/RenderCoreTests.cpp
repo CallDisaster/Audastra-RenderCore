@@ -50,7 +50,7 @@ PoseBatchEvaluator Prepare(const CompiledModel& model) {
 }
 PoseRequest Request(std::uint64_t id = 1) {
     PoseRequest request; request.instance = {id, 7}; request.asset = {11, 1};
-    request.sequenceIndex = 1; request.sequenceElapsedMs = 250;
+    request.sequenceIndex = 0; request.sequenceElapsedMs = 250; // 夹具按时间顺序：Stand=0、Death=1
     return request;
 }
 MdxPoseRequest ReferenceRequest(const PoseRequest& request, std::uint32_t node) {
@@ -119,7 +119,7 @@ void Oracle() {
     }
     // 独立期望值覆盖跳变前、同帧最后键、跳变后和区间末端的重复键。
     for (const bool global : {false, true}) {
-        auto m = model; m.sequences[1].end = 4; m.sequences[1].flags = 1; m.globalSequences = {8};
+        auto m = model; m.sequences[0].end = 4; m.sequences[0].flags = 1; m.globalSequences = {8};
         auto& node = m.helpers[0];
         node.translation = MdxNodeTrack<3>{MdxInterpolation::Linear, global ? 0u : UINT32_MAX,
             {{0, {0, 0, 0}, {}, {}}, {2, {10, 0, 0}, {}, {}}, {2, {20, 0, 0}, {}, {}},
@@ -162,8 +162,8 @@ void Oracle() {
     }
     auto r = Request(); r.hasCamera = 1; r.camera.eye = {4.5f, 3, 20};
     auto m = model; m.helpers[0].flags = 0x48; AgainstReference(m, r); // 轴奇点仍有显式预览警告
-    m = model; m.sequences[1].flags = 1; r = Request(); r.sequenceElapsedMs = 2000; AgainstReference(m, r);
-    m.sequences[1].start = 250; m.sequences[1].end = 250; AgainstReference(m, r);
+    m = model; m.sequences[0].flags = 1; r = Request(); r.sequenceElapsedMs = 2000; AgainstReference(m, r);
+    m.sequences[0].start = 250; m.sequences[0].end = 250; AgainstReference(m, r);
     m = model; m.helpers[0].translation->keys.clear(); AgainstReference(m);
     m.helpers[0].translation->keys = {{500, {3, 2, 1}, {}, {}}}; AgainstReference(m);
     m = model; m.geosets[0].animation = MdxGeosetAnimation{}; m.geosets[0].animation->staticAlpha = -0.25f; AgainstReference(m);
@@ -189,11 +189,11 @@ void Oracle() {
     m = model; m.helpers[0].translation->keys = {{0, {}, {}, {}}, {100, {10,0,0}, {}, {}},
         {200, {20,0,0}, {}, {}}, {150, {15,0,0}, {}, {}}, {300, {30,0,0}, {}, {}},
         {2000, {20,0,0}, {}, {}}, {3000, {30,0,0}, {}, {}}};
-    r = Request(); r.sequenceIndex = 0; AgainstReference(m, r);
-    r.sequenceIndex = 1; AgainstReference(m, r, Code::PoseKeysInvalid);
-    m.sequences[1].end = 100; r.sequenceElapsedMs = 50; AgainstReference(m, r);
+    r = Request(); r.sequenceIndex = 1; AgainstReference(m, r);
+    r.sequenceIndex = 0; AgainstReference(m, r, Code::PoseKeysInvalid);
+    m.sequences[0].end = 100; r.sequenceElapsedMs = 50; AgainstReference(m, r);
     Require(SampleMdxNodePose(m, ReferenceRequest(r, 1)).value->chain.back().translation[0] == 5, "无关动作被逆序轨迹连带拒绝");
-    m.sequences[1].start = 500; m.sequences[1].end = 1000; AgainstReference(m, r);
+    m.sequences[0].start = 500; m.sequences[0].end = 1000; AgainstReference(m, r);
     m.globalSequences = {4000}; m.helpers[0].translation->globalSequence = 0; AgainstReference(m, r, Code::PoseKeysInvalid);
     m = model; m.helpers[0].translation->globalSequence = 0; AgainstReference(m, Request(), Code::PoseGlobalSequenceInvalid);
     m.globalSequences = {0}; m.helpers[0].translation->keys[0].value = {7, 8, 9};
@@ -219,10 +219,10 @@ void Oracle() {
     AgainstReference(m, Request(), Code::PoseInterpolationUnsupported);
     m = model; m.helpers[0].translation->keys[0].value[0] = std::numeric_limits<float>::infinity();
     AgainstReference(m, Request(), Code::PoseNumberInvalid);
-    r = Request(); r.sequenceElapsedMs = 1000; r.sequenceIndex = 0; AgainstReference(m, r); // 坏值不在该动作内
+    r = Request(); r.sequenceElapsedMs = 1000; r.sequenceIndex = 1; AgainstReference(m, r); // 坏值不在该动作内
     m = model; m.bones[0].rotation = MdxNodeTrack<4>{MdxInterpolation::Linear, UINT32_MAX, {{0, {}, {}, {}}}};
     AgainstReference(m, Request(), Code::PoseRotationInvalid);
-    m = model; m.sequences[1].flags = 7; AgainstReference(m, Request(), Code::PoseSequenceUnsupported);
+    m = model; m.sequences[0].flags = 7; AgainstReference(m, Request(), Code::PoseSequenceUnsupported);
     r = Request(); r.sequenceIndex = 99; AgainstReference(model, r, Code::PoseSequenceInvalid);
     r = Request(); r.hasCamera = 1; r.camera.up = {}; AgainstReference(model, r, Code::PoseCameraInvalid);
     m = model; m.bones[0].flags = 0x38; r.camera.up = {0, 0, 1}; AgainstReference(m, r, Code::PoseCameraFlagsUnsupported);
@@ -253,7 +253,7 @@ void Oracle() {
     const std::array collapseRequests{Request()};
     Require(collapseEvaluator.Evaluate(collapseRequests).failedInstances == 0, "零缩放节点矩阵应可求值");
     std::vector<Vec3> cp(4), cn(4);
-    const auto oldCollapsed = SampleMdxRigidSkinnedGeoset(m, {0, 1, 250, 0, std::nullopt});
+    const auto oldCollapsed = SampleMdxRigidSkinnedGeoset(m, {0, 0, 250, 0, std::nullopt});
     Require(!oldCollapsed.Succeeded() && oldCollapsed.diagnostics.front().code == CodeName(Code::SkinNormalInvalid)
         && SkinPreviewGeoset(collapsed, 0, collapseEvaluator.Groups(0), cp, cn) == Code::SkinNormalInvalid,
         "变换后退化法线拒绝与参考不一致");
@@ -289,7 +289,7 @@ void BillboardYZQuad() {
         auto request = Request(); request.hasCamera = 1; request.camera = {camera.eye, camera.up};
         AgainstReference(model, request);
         const auto pose = SampleMdxNodePose(model, ReferenceRequest(request, 0));
-        const auto skin = SampleMdxRigidSkinnedGeoset(model, {0, 1, 250, 0, camera});
+        const auto skin = SampleMdxRigidSkinnedGeoset(model, {0, 0, 250, 0, camera});
         Require(pose.Succeeded() && skin.Succeeded(), "YZ billboard 的轴心/几何采样失败");
         const auto& matrix = pose.value->chain.back().worldMatrix;
         const double det = matrix[0] * (matrix[5] * matrix[10] - matrix[9] * matrix[6])
@@ -325,7 +325,7 @@ void Instances() {
     auto original = Model(); const auto asset = Compile(original); auto evaluator = Prepare(asset);
     Require(asset.Node(0).objectId == 1 && asset.Node(1).parentIndex == 0, "父前子后拓扑未编译");
     const auto groupsBefore = asset.VertexGroups().data();
-    std::array requests{Request(1), Request(2)}; requests[1].sequenceIndex = 0; requests[1].sequenceElapsedMs = 800;
+    std::array requests{Request(1), Request(2)}; requests[1].sequenceIndex = 1; requests[1].sequenceElapsedMs = 800;
     Require(evaluator.Evaluate(requests).failedInstances == 0, "双实例求值失败");
     const std::vector first(evaluator.Groups(0).begin(), evaluator.Groups(0).end());
     const std::vector second(evaluator.Groups(1).begin(), evaluator.Groups(1).end());

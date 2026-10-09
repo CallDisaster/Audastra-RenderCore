@@ -39,13 +39,13 @@ inline void Transforms() {
             Require(made.Succeeded(), "继承求值器创建失败");
             auto evaluator = std::move(*made.value);
             PoseRequest request; request.asset = {1,1}; request.instance = {1,1};
-            request.sequenceIndex = 1; request.hasCamera = camera ? 1u : 0u; request.camera.eye = {200,300,400};
+            request.sequenceIndex = 0; request.hasCamera = camera ? 1u : 0u; request.camera.eye = {200,300,400};
             const auto batch = evaluator.Evaluate(std::span(&request,1));
             Require(batch.error == Code::Ok && batch.failedInstances == 0, "继承求值失败");
             const auto view = camera ? std::optional<MdxPoseCamera>{{{200,300,400},{0,0,1}}} : std::nullopt;
             for (std::uint32_t n = 0; n < compiled.value->NodeCount(); ++n) {
                 const auto id = compiled.value->Node(n).objectId;
-                const auto ref = SampleMdxNodePose(model,{1,0,0,id,view});
+                const auto ref = SampleMdxNodePose(model,{0,0,0,id,view});
                 Require(ref.Succeeded(), "继承参考失败");
                 const auto& actual = evaluator.Nodes(0)[n].worldMatrix;
                 Require(std::memcmp(ref.value->chain.back().worldMatrix.data(),actual.data(),sizeof(actual)) == 0,
@@ -63,13 +63,13 @@ inline void Transforms() {
         }
     // 不继承缩放在本节点旋转之后去掉基列长度，非均匀父缩放不能整体清零。
     auto spun = base; spun.bones[0].flags = 2; spun.bones[0].rotation = Constant<4>({0,0,0.6f,0.8f});
-    auto direct = SampleMdxNodePose(spun,{1,0,0,child.objectId,std::nullopt});
+    auto direct = SampleMdxNodePose(spun,{0,0,0,child.objectId,std::nullopt});
     Require(direct.Succeeded(), "非均匀缩放旋转样本失败");
     const auto& m = direct.value->chain.back().worldMatrix;
     for (std::size_t c = 0; c < 3; ++c)
         Require(std::abs(std::hypot(m[c*4],m[c*4+1],m[c*4+2])-1.0f) < 1e-6f, "缩放剥离没有归一化基列");
     auto bad = base; bad.helpers[0].scaling = Constant<3>({0,3,4}); bad.bones[0].flags = 2;
-    const auto rejection = SampleMdxNodePose(bad,{1,0,0,child.objectId,std::nullopt});
+    const auto rejection = SampleMdxNodePose(bad,{0,0,0,child.objectId,std::nullopt});
     Require(!rejection.Succeeded() && rejection.diagnostics[0].code == "MDX_POSE_INHERITANCE_SINGULAR", "退化继承未拒绝");
     std::cout << "inheritance_samples=" << samples << " bitwise_mismatches=0 analytic_pivots=1 singular_rejected=1\n";
 }

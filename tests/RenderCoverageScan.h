@@ -15,7 +15,7 @@ inline void ScanDetails() {
     auto parsed = ParseMdx(OtherParent("ATCH"));
     Require(parsed.Succeeded(), "扫描详情样本解析失败");
     auto model = *parsed.value;
-    model.bones[0].flags = 0x104; model.sequences[0].end = 1; model.geosets[0].normals[0] = {};
+    model.bones[0].flags = 0x104; model.sequences[0].start = 2; model.sequences[0].end = 1; model.geosets[0].normals[0] = {};
     Record record; record.parse = record.compile = "OK";
     DescribeModel(model, record, [] {});
     for (const auto term : {"flags=0x104", "parent_kind=ATCH", "bad_sequence=0", "zero_normals geoset=0 vertices=1"})

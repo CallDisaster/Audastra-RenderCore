@@ -55,10 +55,17 @@ inline std::vector<std::byte> BuildTestMdx(const Options& options = {}) {
     w.Tag("MODL"); { const auto at = w.Begin(); w.Fixed("Crate", 80); w.Fixed("", 260); w.F32(50);
         w.F32(-10); w.F32(-10); w.F32(0); w.F32(10); w.F32(10); w.F32(20); w.U32(150); w.EndChunk(at); }
     w.Tag("SEQS"); { const auto at = w.Begin();
-        w.Fixed("Death", 80); w.U32(2000); w.U32(3000); w.F32(0); w.U32(0); w.F32(0); w.U32(0); w.F32(0);
-        for (int i = 0; i < 6; ++i) w.F32(0);
-        w.Fixed("Stand - 1", 80); w.U32(0); w.U32(1000); w.F32(0); w.U32(0); w.F32(0); w.U32(0); w.F32(0);
-        for (int i = 0; i < 6; ++i) w.F32(0);
+        const auto death = [&] {
+            w.Fixed("Death", 80); w.U32(2000); w.U32(3000); w.F32(0); w.U32(0); w.F32(0); w.U32(0); w.F32(0);
+            for (int i = 0; i < 6; ++i) w.F32(0);
+        };
+        const auto stand = [&] {
+            w.Fixed("Stand - 1", 80); w.U32(0); w.U32(1000); w.F32(0); w.U32(0); w.F32(0); w.U32(0); w.F32(0);
+            for (int i = 0; i < 6; ++i) w.F32(0);
+        };
+        // 原版按动作文件顺序切节点键区间：排在更晚动作之后的 Stand 拿不到键。带节点动画时按时间顺序写，
+        // 动作序号因此为 Stand=0、Death=1；不带节点动画的旧夹具保持原顺序。
+        if (options.animatedHelper) { stand(); death(); } else { death(); stand(); }
         w.EndChunk(at); }
     w.Tag("TEXS"); { const auto at = w.Begin();
         w.U32(0); w.Fixed("Textures\\Crate.blp", 260); w.U32(3);

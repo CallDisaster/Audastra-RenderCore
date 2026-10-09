@@ -48,7 +48,7 @@ void Run() {
     std::array<PoseRequest, 64> batch{};
     for (std::size_t i = 0; i < batch.size(); ++i) {
         batch[i].instance = {i + 1, 3}; batch[i].asset = asset.Identity();
-        batch[i].sequenceIndex = 1; batch[i].sequenceElapsedMs = 11 * i;
+        batch[i].sequenceIndex = 0; batch[i].sequenceElapsedMs = 11 * i;
     }
     Require(full.value->Evaluate(batch).failedInstances == 0 && compact.value->Evaluate(batch).failedInstances == 0,
         "批量失败");

@@ -124,17 +124,19 @@ void SourceOrder() {
         Compare(model, Request(0, elapsed), NodeKeySamplingPolicy::Strict, Code::PoseKeysInvalid);
         const auto sample = Compare(model, Request(0, elapsed), NodeKeySamplingPolicy::SourceOrderPreview);
         const auto z = Node(sample.nodes, 45).translation[2];
+        // 1.27a 顺序查找：动作终点 6253 时扫描越过末尾重复起点键 4168，跨度为 0 取该键（-300）。
         const std::array<float, 5> expected{-300, static_cast<float>(-300.0 + 625.0 / 1251.0 * 269.0),
-            -31, -5.5f, 20};
+            -31, -5.5f, -300};
         const auto index = elapsed == 0 ? 0u : elapsed == 625 ? 1u : elapsed == 1251 ? 2u : elapsed == 1668 ? 3u : 4u;
-        Require(std::abs(z - expected[index]) < 0.00004f, "Birth tail duplicate locked rise");
+        Require(std::abs(z - expected[index]) < 0.00004f, "Birth follows 1.27a ordered lookup");
         Require(HasWarning(sample, 45, TrackKind::Translation, 6253, 4168), "Birth source warning lost");
         Require(Node(sample.nodes, 45).rotation == Quaternion{0, 0, 0, 1}
             && Node(sample.nodes, 45).scaling == Vec3{1, 1, 1}, "global0 single key changed");
     }
     const std::array<std::uint64_t, 9> times{0, 417, 418, 419, 834, 835, 869, 2100, 4169};
-    const std::array<float, 9> expected{1, static_cast<float>(1.0 + 417.0 / 418.0), 3,
-        static_cast<float>(2.0 + 2.0 / 416.0), 4,
+    // 1.27a 顺序查找：15003 停在第一个同帧键（2）；15419 已越过逆序键 15003，按 15003→15454 插值。
+    const std::array<float, 9> expected{1, static_cast<float>(1.0 + 417.0 / 418.0), 2,
+        static_cast<float>(2.0 + 2.0 / 416.0), static_cast<float>(3.0 + 2.0 * 416.0 / 451.0),
         static_cast<float>(3.0 + 2.0 * 417.0 / 451.0), 5,
         static_cast<float>(5.0 - 4.0 * 1231.0 / 3300.0), 1};
     for (std::size_t i = 0; i < times.size(); ++i) {
@@ -153,6 +155,28 @@ void SourceOrder() {
         Require(model.bones[1].scaling->keys[i].frame == original19[i].frame
             && Bits(model.bones[1].scaling->keys[i].value, original19[i].value), "raw source reordered");
 }
+// 原版逐动作区间：动作按文件顺序共享只进游标，重叠或倒序排列的动作拿不到被前者收走的键。
+void GameRanges() {
+    auto m = Parse(SourceOrderTest::Bytes()); m.bones[1].scaling.reset(); m.bones[2].scaling.reset();
+    m.helpers[0].translation = MdxNodeTrack<3>{MdxInterpolation::Linear, UINT32_MAX,
+        {{100, {10, 0, 0}, {}, {}}, {200, {20, 0, 0}, {}, {}}, {300, {30, 0, 0}, {}, {}}, {400, {40, 0, 0}, {}, {}}}};
+    m.sequences = {{"A", 100, 300, 1}, {"B", 200, 400, 1}, {"C", 600, 700, 1}};
+    for (const auto mode : {NodeKeySamplingPolicy::Strict, NodeKeySamplingPolicy::SourceOrderPreview}) {
+        const auto a = Compare(m, Request(0, 150), mode);
+        Require(Node(a.nodes, 45).translation[0] == 25 && a.diagnostics.empty(), "first action interpolates its keys");
+        // B 与 A 重叠：200、300 已归 A，B 只剩 400，任意时刻取该键。
+        const auto b = Compare(m, Request(1, 50), mode);
+        Require(Node(b.nodes, 45).translation[0] == 40, "overlapping action lost keys taken by the previous one");
+    }
+    m.sequences = {{"Late", 300, 400, 1}, {"Early", 100, 200, 1}};
+    for (const auto mode : {NodeKeySamplingPolicy::Strict, NodeKeySamplingPolicy::SourceOrderPreview}) {
+        const auto late = Compare(m, Request(0, 50), mode);
+        Require(Node(late.nodes, 45).translation[0] == 35, "late action ranges after skipped keys");
+        // 游标已越过 100、200：排在后面的早期动作区间为空，取默认值。
+        const auto early = Compare(m, Request(1, 50), mode);
+        Require(Node(early.nodes, 45).translation == Vec3{}, "reversed action order must leave an empty range");
+    }
+}
 MdxModel SingleTrack() {
     auto m = Parse(SourceOrderTest::Bytes()); m.bones[1].scaling.reset(); m.bones[2].scaling.reset();
     m.helpers[0].translation = MdxNodeTrack<3>{MdxInterpolation::Linear, UINT32_MAX,
@@ -166,27 +190,30 @@ void Boundaries() {
     const auto before = Compare(m, Request(0, 50), NodeKeySamplingPolicy::SourceOrderPreview);
     Require(Node(before.nodes, 45).translation[0] == 77.5f, "before-first seam changed");
     Compare(m, Request(0, 800), NodeKeySamplingPolicy::Strict, Code::PoseKeysInvalid);
+    // 零长动作 200：游标跳过 100 后遇到 500 超过终点即停，区间为空，两种模式都取默认值。
     m.sequences[0].start = m.sequences[0].end = 200;
-    Compare(m, Request(0, UINT64_MAX), NodeKeySamplingPolicy::Strict, Code::PoseKeysInvalid);
+    const auto zeroStrict = Compare(m, Request(0, UINT64_MAX), NodeKeySamplingPolicy::Strict);
     const auto zero = Compare(m, Request(0, UINT64_MAX), NodeKeySamplingPolicy::SourceOrderPreview);
-    Require(Node(zero.nodes, 45).translation[0] == 20, "zero-length exact changed");
+    Require(Node(zeroStrict.nodes, 45).translation == Vec3{} && Node(zero.nodes, 45).translation == Vec3{}
+        && zero.diagnostics.empty(), "zero-length empty game range");
     m.sequences[0] = {"Empty", 800, 1000, 1};
     const auto empty = Compare(m, Request(0, 50), NodeKeySamplingPolicy::Strict);
     Require(Node(empty.nodes, 45).translation == Vec3{}, "empty sequence default changed");
     Compare(m, Request(0, 50), NodeKeySamplingPolicy::SourceOrderPreview);
-    // 逆序边跨过动作、但没有动作内按键：仅显式模式警告并返回原来的默认TRS。
+    // 逆序边跨过动作、但原版区间为空（首键已超过终点）：两种模式都返回默认TRS，不再警告。
     m.helpers[0].translation->keys = {{500, {50, 0, 0}, {}, {}}, {100, {10, 0, 0}, {}, {}}};
     m.sequences[0] = {"CoveredGap", 200, 300, 1};
-    Compare(m, Request(0, 1), NodeKeySamplingPolicy::Strict, Code::PoseKeysInvalid);
+    const auto gapStrict = Compare(m, Request(0, 1), NodeKeySamplingPolicy::Strict);
     const auto gap = Compare(m, Request(0, 1), NodeKeySamplingPolicy::SourceOrderPreview);
-    Require(Node(gap.nodes, 45).translation == Vec3{} && HasWarning(gap, 45, TrackKind::Translation, 500, 100), "gap provenance lost");
+    Require(Node(gapStrict.nodes, 45).translation == Vec3{} && Node(gap.nodes, 45).translation == Vec3{}
+        && gap.diagnostics.empty(), "empty game range must use defaults");
     for (const auto number : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()}) {
         m = SingleTrack(); m.helpers[0].translation->keys[1].value[0] = number;
         Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseNumberInvalid);
     }
     m = SingleTrack(); m.helpers[0].rotation = MdxNodeTrack<4>{MdxInterpolation::Linear, UINT32_MAX,
         {{100, {0, 0, 0, 1}, {}, {}}, {500, {}, {}, {}}, {200, {0, 0, 0, 1}, {}, {}}}};
-    Compare(m, Request(0, 500), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseRotationInvalid);
+    Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseRotationInvalid);
     m = SingleTrack(); m.helpers[0].translation->interpolation = static_cast<MdxInterpolation>(99);
     Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseInterpolationUnsupported);
     m = SingleTrack(); m.helpers[0].translation->globalSequence = 99;
@@ -268,6 +295,7 @@ void Budgets() {
     m = SingleTrack(); auto& keys = m.helpers[0].translation->keys; keys.clear();
     for (std::int32_t i = 0; i < 65535; ++i) keys.push_back({i, {1, 0, 0}, {}, {}});
     keys.push_back({100, {1, 0, 0}, {}, {}});
+    m.sequences[0].end = 70000; // 原版区间收下全部 65536 键（含末尾逆序键）
     const auto large = Compile(m); limits = Limits(68); limits.maxInstances = 17;
     auto bounded = Prepared(large, NodeKeySamplingPolicy::SourceOrderPreview, limits);
     Require(bounded.Succeeded(), "key work budget prewarm");
@@ -355,6 +383,7 @@ int main(int argc, char** argv) {
         if (group == "source-order") SourceOrder();
         else if (group == "boundaries") Boundaries();
         else if (group == "budgets") Budgets();
+        else if (group == "game-ranges") GameRanges();
         else if (group == "real-model") RealModel();
         else throw std::runtime_error("unknown group");
         std::cout << "PASS " << group << '\n'; return 0;

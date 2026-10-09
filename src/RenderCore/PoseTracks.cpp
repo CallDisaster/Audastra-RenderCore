@@ -27,32 +27,31 @@ std::array<float, N> SampleTrack(const Track<N>& track, std::array<float, N> fal
     const Key<N>* rightKey = nullptr;
     std::int64_t offset = 0, span = 0;
     bool seam = false;
-    const bool strictRangeInvalid = !track.sequenceKeys.empty()
-        && track.sequenceKeys[sequenceIndex].offset == NoIndex;
-    if (strictRangeInvalid) {
-        if (track.global || e.nodeKeys != NodeKeySamplingPolicy::SourceOrderPreview) {
-            e.Fail(Code::PoseKeysInvalid); return fallback;
-        }
+    const bool ranged = !track.global && !track.sequenceKeys.empty();
+    const auto range = ranged ? track.sequenceKeys[sequenceIndex] : Range32{};
+    if (ranged && track.sequenceDescending[sequenceIndex] != 0) {
+        // 区间内含逆序边：严格模式拒绝；显式原序预览按原版顺序查找（扫描次数受批次预算限制）。
+        if (e.nodeKeys != NodeKeySamplingPolicy::SourceOrderPreview) { e.Fail(Code::PoseKeysInvalid); return fallback; }
         const auto remaining = e.sourceOrderKeyBudget ? *e.sourceOrderKeyBudget : 0;
-        if (!e.sourceOrderKeyBudget || track.keys.size() > remaining) {
+        if (!e.sourceOrderKeyBudget || range.count > remaining) {
             e.failureDiagnostic = Code::NodeSourceOrderKeyLimit;
-            e.failureLeft = static_cast<std::int64_t>(track.keys.size());
+            e.failureLeft = static_cast<std::int64_t>(range.count);
             e.failureRight = static_cast<std::int64_t>(remaining);
             e.Fail(Code::CapacityExceeded); return fallback;
         }
-        *e.sourceOrderKeyBudget -= track.keys.size();
-        const auto window = SelectSourceOrderNodeWindow(track.keys, beginTime, endTime, time);
-        if (!window.descending) { e.Fail(Code::PoseKeysInvalid); return fallback; }
-        e.Warn(Code::NodeSourceOrderPreview, window.reverseLeft, window.reverseRight);
+        *e.sourceOrderKeyBudget -= range.count;
+        std::int64_t reverseLeft = 0, reverseRight = 0;
+        (void)FirstDescendingEdge(track.keys, range.offset, range.count, reverseLeft, reverseRight);
+        e.Warn(Code::NodeSourceOrderPreview, reverseLeft, reverseRight);
+        const auto window = SelectGameKeyWindow(track.keys, range.offset, range.count, beginTime, endTime, time);
         if (!e.Good() || window.kind == SourceOrderWindowKind::Empty) return fallback;
         if (window.kind == SourceOrderWindowKind::Value) return keyValue(track.keys[window.left]);
         leftKey = &track.keys[window.left]; rightKey = &track.keys[window.right];
         offset = window.offset; span = window.span; seam = window.seam;
     } else {
-        // 严格/单调/全局路径不变；全局键已经减去首帧，周期外右键仍可参与插值。
+        // 单调区间二分与原版顺序查找结果相同；全局键已经减去首帧，周期外右键仍可参与插值。
         auto begin = track.keys.begin(), end = track.keys.end();
-        if (!track.sequenceKeys.empty()) {
-            const auto range = track.sequenceKeys[sequenceIndex];
+        if (ranged) {
             begin += range.offset; end = begin + range.count;
         } else if (!track.global) {
             begin = std::lower_bound(begin, end, beginTime, [](const auto& key, auto value) { return key.frame < value; });

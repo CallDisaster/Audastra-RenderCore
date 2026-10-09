@@ -30,8 +30,10 @@ struct Track {
     std::uint32_t period = 0;
     std::int32_t origin = 0; // 全局键已归零；诊断仍指向源文件帧号。
     std::vector<Key<N>> keys;
-    // 仅普通逆序轨迹需要动作索引；NoIndex 表示动作与逆序帧区间相交。
+    // 原版逐动作区间（ForEachGameSequenceRange）；与按时间二分结果相同且无逆序时为空，沿用二分。
     std::vector<Range32> sequenceKeys;
+    std::vector<std::uint8_t> sequenceDescending; // 与 sequenceKeys 同长；区间内含逆序边
+
 };
 struct CompiledNode {
     NodeLayout layout;

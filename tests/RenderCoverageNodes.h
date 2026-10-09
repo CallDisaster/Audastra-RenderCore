@@ -62,10 +62,10 @@ inline void Nodes() {
         auto evaluator = std::move(*created.value);
         for (const auto time : {0u, 250u, 500u, 999u}) {
             PoseRequest request; request.instance = {1, 1}; request.asset = {1, 1};
-            request.sequenceIndex = 1; request.sequenceElapsedMs = time;
+            request.sequenceIndex = 0; request.sequenceElapsedMs = time;
             Require(evaluator.Evaluate(std::span(&request, 1)).failedInstances == 0, "公共节点求值失败");
             for (std::uint32_t n = 0; n < 2; ++n) {
-                const auto ref = SampleMdxNodePose(model, {1, time, 0, compiled.value->Node(n).objectId, std::nullopt});
+                const auto ref = SampleMdxNodePose(model, {0, time, 0, compiled.value->Node(n).objectId, std::nullopt});
                 Require(ref.Succeeded(), "参考公共节点失败");
                 Require(std::memcmp(ref.value->chain.back().worldMatrix.data(), evaluator.Nodes(0)[n].worldMatrix.data(),
                     sizeof(std::array<float, 16>)) == 0, "公共节点新旧差分");
