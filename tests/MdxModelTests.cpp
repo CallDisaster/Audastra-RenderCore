@@ -65,9 +65,11 @@ void TestParse() {
     Require(!second.visibleInStand, "Stand 起点透明度为 0 的 geoset 隐藏");
     Require(second.animation && second.animation->hasAlphaTrack && second.animation->interpolation == 0
         && second.animation->alphaKeys.size() == 2, "GEOA/KGAO 阶梯轨迹保留供显式帧求值");
+    // 夹具 SEQS 为 Death(0) 在前、Stand(1) 在后：原版只进游标让 Death 收下 2000 键，Stand 的 0 帧键已被越过，
+    // 取 GEOA 静态透明度 1（游戏内同样如此）；visibleInStand 是读取时的静态摘要，不走逐动作区间。
     const auto standAlpha = SampleMdxGeosetAlpha(model, {1, 1, 500, 0});
     const auto deathAlpha = SampleMdxGeosetAlpha(model, {1, 0, 0, 0});
-    Require(standAlpha.Succeeded() && *standAlpha.value == 0.0f
+    Require(standAlpha.Succeeded() && *standAlpha.value == 1.0f
         && deathAlpha.Succeeded() && *deathAlpha.value == 1.0f, "GEOA 按动作帧决定可见度");
     Require(model.bones.size() == 1 && model.pivots.size() == 1 && model.helpers.empty()
         && model.skinningTopologyComplete && model.skinningTopologyIssue.empty(), "静态模型的节点与轴心可解析");

@@ -10,13 +10,14 @@ Alpha CompileMaterialScalarAlpha(const War3Map::Render::MdxLayer& source,
     const std::vector<std::uint32_t>& periods, bool identicalDuplicatesPreview = false);
 float SampleScalarAlpha(const Alpha& channel, const Sequence& sequence, std::uint32_t frame,
     std::uint64_t global, Evaluation& e, bool identicalDuplicatesPreview = false) noexcept;
+// GEOA 非全局轨迹按原版逐动作区间编译（见 GameKeyRanges.h）；含逆序边的区间只在原序预览策略下采样。
 Alpha CompileGeosetAlpha(const std::optional<War3Map::Render::MdxGeosetAnimation>& source,
-    const std::vector<std::uint32_t>& periods);
+    const std::vector<std::uint32_t>& periods, const std::vector<War3Map::Render::MdxSequence>& sequences);
 ColorChannel CompileGeosetRgb(const std::optional<War3Map::Render::MdxGeosetAnimation>& source,
-    const std::vector<std::uint32_t>& periods);
-bool EvaluateGeosets(const ModelData& model,const Sequence& sequence,std::uint32_t frame,std::uint64_t global,
+    const std::vector<std::uint32_t>& periods, const std::vector<War3Map::Render::MdxSequence>& sequences);
+bool EvaluateGeosets(const ModelData& model,std::uint32_t sequenceIndex,std::uint32_t frame,std::uint64_t global,
     std::span<float> alphas,std::span<Vec3> colors,Evaluation& e) noexcept;
-bool EvaluateGeosets(const ModelData& model,const Sequence& sequence,std::uint32_t frame,std::uint64_t global,
+bool EvaluateGeosets(const ModelData& model,std::uint32_t sequenceIndex,std::uint32_t frame,std::uint64_t global,
     std::span<float> alphas,std::span<Vec3> colors,Evaluation& e,
     std::span<GeosetIssue> issues,std::uint32_t& issueCount) noexcept;
 }

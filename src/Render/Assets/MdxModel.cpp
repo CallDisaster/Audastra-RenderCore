@@ -5,6 +5,7 @@
 #include "MdxNodeRead.h"
 #include "MdxPremRead.h"
 #include "MdxRigidStaticPreviewInternal.h"
+#include "War3RenderCore/GameKeyRanges.h"
 
 #include <algorithm>
 #include <bit>
@@ -668,7 +669,7 @@ Result<std::vector<float>> SampleMdxLayerAlphas(const MdxModel& model, const Mdx
                 if (material.hasUninterpretedData || layer.hasUninterpretedData)
                     return Out::Failure("Mdx.MaterialAlpha", "MDX_MATERIAL_ALPHA_UNINTERPRETED", "材质/层含未解释数据；不取静态alpha成功值。");
                 auto sampled = SampleGeoReference<1>(model, request, {layer.alpha}, layer.animatedAlpha,
-                    layer.alphaInterpolation, layer.alphaGlobalSequence, layer.alphaKeys);
+                    layer.alphaInterpolation, layer.alphaGlobalSequence, layer.alphaKeys, false);
                 if (!sampled.Succeeded()) {
                     for (auto& diagnostic : sampled.diagnostics) {
                         diagnostic.subsystem = "Mdx.MaterialAlpha";

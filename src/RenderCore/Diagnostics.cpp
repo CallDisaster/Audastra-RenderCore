@@ -52,7 +52,7 @@ DiagnosticText Text(Code code) noexcept {
     case Code::GeoaGlobalSpanUnsupported: return {"MDX_GEOA_GLOBAL_SPAN_UNSUPPORTED", "GEOA 全局轨迹归零后的帧跨度超出已确认的有符号范围。"};
     case Code::GeoaLimit: return {"MDX_GEOA_LIMIT", "KGAO 按键超过读取器硬上限。"};
     case Code::GeoaSequenceUnsupported: return {"MDX_GEOA_SEQUENCE_UNSUPPORTED", "动作区间或循环标志尚不支持。"};
-    case Code::GeoaKeysInvalid: return {"MDX_GEOA_KEYS_INVALID", "KGAO 按键帧必须严格递增。"};
+    case Code::GeoaKeysInvalid: return {"MDX_GEOA_KEYS_INVALID", "GEOA 键帧顺序无法采样：全局轨迹须严格递增；当前动作区间含逆序帧时严格模式不采样，原序预览按原版顺序查找。"};
     case Code::GeoaBoundaryUnsupported: return {"MDX_GEOA_BOUNDARY_UNSUPPORTED", "GEOA 当前帧超出可确定的真实按键区间。"};
     case Code::AssetIdentityInvalid: return {"RENDER_CORE_ASSET_IDENTITY_INVALID", "资产编号或来源身份缺失/超限，不能仅按路径识别资产。"};
     case Code::AssetIdentityConflict: return {"RENDER_CORE_ASSET_IDENTITY_CONFLICT", "同一资产编号与代次绑定了不同编译资产；请更新代次。"};

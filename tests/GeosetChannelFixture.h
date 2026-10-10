@@ -9,7 +9,10 @@ inline std::vector<std::byte> Bytes(std::uint32_t mode, bool global) {
     const auto original=MdxTest::BuildTestMdx(); MdxTest::Writer out; out.Tag("MDLX");
     for (std::size_t at=4;at<original.size();) {
         std::uint32_t size=0;std::memcpy(&size,original.data()+at+4,4);
-        if (std::memcmp(original.data()+at,"GEOA",4)!=0) out.Raw(original.data()+at,size+8);
+        if (std::memcmp(original.data()+at,"SEQS",4)==0 && size==2*132) {
+            // 原版按动作文件顺序切 GEOA 键区间：Stand [0,1000] 须排在 Death [2000,3000] 前才拿得到键。
+            out.Raw(original.data()+at,8);out.Raw(original.data()+at+8+132,132);out.Raw(original.data()+at+8,132);
+        } else if (std::memcmp(original.data()+at,"GEOA",4)!=0) out.Raw(original.data()+at,size+8);
         else {
             out.Tag("GEOA");const auto chunk=out.Begin(),object=out.Begin();
             out.F32(1);out.U32(2);out.F32(1);out.F32(0.211765f);out.F32(0);out.U32(1);

@@ -163,9 +163,9 @@ void EvaluateOne(const CompiledModel& asset, const PoseRequest& request, std::sp
         }
     }
     e.objectId = NoIndex; e.track = TrackKind::None;
-    if (preview) (void)EvaluateGeosets(model, sequence, receipt.sequenceFrame, request.globalElapsedMs,
+    if (preview) (void)EvaluateGeosets(model, request.sequenceIndex, receipt.sequenceFrame, request.globalElapsedMs,
         alphas, colors, e, issues, issueCount);
-    else (void)EvaluateGeosets(model, sequence, receipt.sequenceFrame, request.globalElapsedMs, alphas, colors, e);
+    else (void)EvaluateGeosets(model, request.sequenceIndex, receipt.sequenceFrame, request.globalElapsedMs, alphas, colors, e);
 }
 } // namespace
 

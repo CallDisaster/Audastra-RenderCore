@@ -62,8 +62,13 @@ void ParseColor() {
     Require(!SampleMdxGeosetColor(unknown,{1,1,0,0}).Succeeded(), "invalid sequence accepted");
     Require(!SampleMdxGeosetColor(model,{9,1,0,0}).Succeeded(), "invalid geoset accepted");
     // A 链路完成后，静态 RGB 不再封住 alpha；未知位和未知尾部的拒绝仍在上方覆盖。
-    const auto blocked = SampleMdxGeosetAlpha(model,{1,1,250,0});
-    Require(blocked.Succeeded() && *blocked.value == 0.0f, "静态 RGB 的 KGAO 未正确求值");
+    // 夹具 SEQS 为 Death(0) [2000,3000] 在前、Stand(1) [0,1000] 在后：原版只进游标让 Death 收下 2000 键，
+    // Stand 区间为空取静态透明度。静态值改为 0.5 以区分“取键”和“取默认”。
+    auto alphaModel = model; alphaModel.geosets[1].animation->staticAlpha = 0.5f;
+    const auto death = SampleMdxGeosetAlpha(alphaModel,{1,0,0,0});
+    const auto stand = SampleMdxGeosetAlpha(alphaModel,{1,1,250,0});
+    Require(death.Succeeded() && *death.value == 1.0f && stand.Succeeded() && *stand.value == 0.5f,
+        "静态 RGB 的 KGAO 未正确求值");
     std::cout << "geoa_static_color_rgb=1 flags_retained=1 inactive_identity=1 strict_rejections=1 static_rgb_alpha_enabled=1\n";
 }
 }

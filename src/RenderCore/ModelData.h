@@ -58,6 +58,9 @@ template<std::size_t N> struct GeoChannel {
     bool global = false;
     Code error = Code::Ok;
     std::vector<GeoKey<N>> keys;
+    // GEOA 非全局轨迹：原版逐动作区间（与动作同长）及区间内是否含逆序边。全局轨迹与材质通道为空，沿用旧路径。
+    std::vector<Range32> ranges;
+    std::vector<std::uint8_t> descending;
 };
 using Alpha = GeoChannel<1>;
 using ColorChannel = GeoChannel<3>;

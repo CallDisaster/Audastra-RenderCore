@@ -258,8 +258,9 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
         }
         out->positions.insert(out->positions.end(), g.positions.begin(), g.positions.end());
         out->normals.insert(out->normals.end(), g.normals.begin(), g.normals.end());
-        out->geosets.push_back(layout); out->alphas.push_back(CompileGeosetAlpha(g.animation,model.globalSequences));
-        out->colorTracks.push_back(CompileGeosetRgb(g.animation,model.globalSequences));
+        out->geosets.push_back(layout); out->alphas.push_back(CompileGeosetAlpha(g.animation,model.globalSequences,model.sequences));
+        out->colorTracks.push_back(CompileGeosetRgb(g.animation,model.globalSequences,model.sequences));
+        budget.Charge(out->alphas.back().ranges.size()+out->colorTracks.back().ranges.size(),sizeof(Range32)+sizeof(std::uint8_t));
         out->colors.push_back(g.animation ? CompileGeosetColor(g.animation->flags,
             g.animation->staticColor, g.animation->hasUninterpretedData) : GeosetColor{});
     }

@@ -228,10 +228,17 @@ void Oracle() {
     m = model; m.bones[0].flags = 0x38; r.camera.up = {0, 0, 1}; AgainstReference(m, r, Code::PoseCameraFlagsUnsupported);
     m = model; auto& a = *m.geosets[1].animation;
     a.alphaKeys = {{100, 0.2f}, {900, 0.8f}}; AgainstReference(m);
-    r = Request(); r.sequenceElapsedMs = 0; AgainstReference(m, r, Code::GeoaBoundaryUnsupported);
+    r = Request(); r.sequenceElapsedMs = 0; AgainstReference(m, r); // 首键前按原版接缝回绕，不再拒绝
     a.interpolation = 99; AgainstReference(m, Request(), Code::GeoaInterpolationUnsupported);
     a.interpolation = 0; a.globalSequence = 0; AgainstReference(m, Request(), Code::GeoaGlobalSequenceUnsupported);
-    a.globalSequence = UINT32_MAX; a.alphaKeys[1].frame = 100; AgainstReference(m, Request(), Code::GeoaKeysInvalid);
+    // 非全局同帧键按原版顺序查找（取同帧最后一个）；区间内逆序键在严格模式拒绝。
+    a.globalSequence = UINT32_MAX; a.alphaKeys[1].frame = 100; AgainstReference(m, Request());
+    a.alphaKeys[1].frame = 50;
+    {   // 参考按原版顺序取值；严格核心拒绝该区间（原序预览的逐位差分见 GeosetChannelTests）。
+        const auto asset = Compile(m); auto evaluator = Prepare(asset); const std::array requests{Request()};
+        Require(evaluator.Evaluate(requests).error == Code::Ok && evaluator.Receipts()[0].error == Code::GeoaKeysInvalid
+            && SampleMdxGeosetAlpha(m, {1, 0, 250, 0}).Succeeded(), "严格模式未拒绝逆序 GEOA 或参考未按原版取值");
+    }
     a.alphaKeys[1].frame = 900; a.alphaKeys[1].value = std::numeric_limits<float>::quiet_NaN();
     AgainstReference(m, Request(), Code::GeoaNumberInvalid);
     a.alphaKeys.clear(); a.hasUninterpretedData = true; AgainstReference(m, Request(), Code::GeoaUninterpreted);
