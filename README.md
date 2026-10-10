@@ -31,7 +31,7 @@ FORGE 通过 WAR3_RENDER_CORE_SOURCE_DIR 引用这个仓库，并检查锁定提
 算法只保留一份。历史 War3Map 命名空间和部分头路径保留以减少 ABI/调用变动。
 插件合同是原输入测试的标准库闭包，游戏渲染接口尚未接通。
 
-许可见 COPYRIGHT.md；来源见 docs/PROVENANCE.md 和 docs/MIGRATION.tsv。
+许可见 COPYRIGHT.md（GPLv3 + 与 Audastra 组合的附加许可）；来源见 docs/PROVENANCE.md 和 docs/MIGRATION.tsv。
 暂不接受外部贡献。不提交暴雪模型、贴图或反编译材料，不设置远程，不自动公开。
 
 Computed/ExternalGroups 是近似预览；新外部帧输入验证并复制宿主提供的数值。
