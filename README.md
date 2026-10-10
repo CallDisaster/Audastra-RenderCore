@@ -51,6 +51,14 @@ FORGE 配置及实际消费者构建都拒绝未提交的共享修改；不要�
 默认 PoseDiagnostic 仍为32字节。PREM 读取不代表子模型已经发射或 GPU 绘制。
 接口和边界见 `docs/KMTA_PREM_PREVIEW.md`；候选验证回执由消费者记录。
 
+0.1.19 实现贴图坐标动画（TXAN，流动/滚动贴图）：解析器读取 TXAN 的 KTAT/KTAR/KTAS，材质贴图 sidecar
+按原版节点轨迹编译器（同一逐动作区间与全局时钟规则，代码与节点共用 `NodeTrackCompile.h`）编译，并按 IDA 6F77C730
+的合成顺序求值：坐标先平移，再绕 (0.5,0.5) 缩放，最后绕 (0.5,0.5) 旋转。`PoseBatchEvaluator::LayerUvTransforms`
+输出与 `LayerTextureIds` 同序的二维仿射（与 `War3RenderMaterialStateV2::uvTransform` 同义），无 TXAN 的层为单位变换；
+`CompiledMaterialTextures::HasAnimatedUv` 供宿主决定是否逐帧发布材质状态。KMTF 层带 TXAN 不再拒绝；非零坐标组仍拒绝。
+坏 TXAN 块整块不采用（`MDX_TXAN_UNINTERPRETED`），引用不存在或轨迹无效的条目保持静态坐标并报
+`MATERIAL_UV_ANIMATION_STATIC`，都不连带隐藏模型。原版贴图矩阵在设备侧的应用方式尚未取证，按 (u,v,0,1) 仿射处理。
+
 0.1.18 让材质层透明度（KMTA）的非全局轨迹也按原版逐动作区间取值：IDA 确认材质层经 6F785260 → 6F780270
 编译，与 GEOA 透明度是同一个编译器（调用 6F78A090 切区间）。同帧键在区间内本就合法；区间含逆序边时严格模式报
 `MDX_MATERIAL_ALPHA_KEYS_INVALID`，原序预览按原版顺序查找。全局轨迹仍须严格递增。

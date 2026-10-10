@@ -163,6 +163,13 @@ war3_render_core_options(war3-material-textures-tests)
 add_test(NAME render-material-textures COMMAND war3-material-textures-tests)
 set_tests_properties(render-material-textures PROPERTIES TIMEOUT 60)
 
+add_executable(war3-material-uv-animation-tests "${_render_core_repo}/tests/MaterialUvAnimationTests.cpp"
+    "${_render_core_repo}/tests/RenderCoreAllocProbe.cpp")
+target_link_libraries(war3-material-uv-animation-tests PRIVATE War3RenderCore::CPU)
+war3_render_core_options(war3-material-uv-animation-tests)
+add_test(NAME render-material-uv-animation COMMAND war3-material-uv-animation-tests)
+set_tests_properties(render-material-uv-animation PROPERTIES TIMEOUT 60)
+
 # 解析器原测试随唯一上游迁移，保留 FORGE 的原 CTest 名称。
 add_executable(war3-map-MdxModel-tests "${_render_core_repo}/tests/MdxModelTests.cpp")
 target_link_libraries(war3-map-MdxModel-tests PRIVATE War3RenderCore::CPU)

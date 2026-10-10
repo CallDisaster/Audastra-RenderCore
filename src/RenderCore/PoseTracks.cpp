@@ -117,6 +117,17 @@ std::array<float, N> SampleTrack(const Track<N>& track, std::array<float, N> fal
 }
 } // namespace
 
+std::array<float, 3> SampleVec3Track(const Track<3>& track, std::array<float, 3> fallback,
+    const Sequence& sequence, std::uint32_t sequenceIndex, std::uint32_t frame, std::uint64_t globalTime,
+    Evaluation& e) noexcept {
+    return SampleTrack(track, fallback, sequence, sequenceIndex, frame, globalTime, e);
+}
+Quaternion SampleQuaternionTrack(const Track<4>& track, Quaternion fallback,
+    const Sequence& sequence, std::uint32_t sequenceIndex, std::uint32_t frame, std::uint64_t globalTime,
+    Evaluation& e) noexcept {
+    return SampleTrack(track, fallback, sequence, sequenceIndex, frame, globalTime, e);
+}
+
 std::uint32_t SequenceFrame(const Sequence& sequence, const PoseRequest& request) noexcept {
     const auto duration = static_cast<std::uint64_t>(sequence.end) - sequence.start;
     const auto elapsed = sequence.flags == 0 && duration != 0

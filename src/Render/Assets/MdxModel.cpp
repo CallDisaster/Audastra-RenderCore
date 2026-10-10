@@ -524,6 +524,17 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
                 else if (tag == "RIBB") ParseSizedNodes(chunk, model, limits, totalBoneKeys, MdxNodeKind::Ribbon, 52, "RIBB");
                 else if (tag == "EVTS") ParseEvents(chunk, model, limits, totalBoneKeys);
                 else ParseCollisions(chunk, model, limits, totalBoneKeys);
+            } else if (tag == "TXAN") {
+                // 坏 TXAN 不连带拒绝几何：整块不采用并记录原因，引用层由渲染端按静态坐标并给出诊断。
+                auto keys = totalBoneKeys;
+                try {
+                    ParseTextureAnimations(chunk, model, limits, keys);
+                    totalBoneKeys = keys;
+                } catch (const MdxError& error) {
+                    model.textureAnimations.clear();
+                    model.textureAnimationIssue = std::string(error.code) + "：" + error.what()
+                        + " TXAN offset=" + std::to_string(file.Position() - 8) + "。";
+                }
             } else if (tag == "PIVT") {
                 if (seenPivots) Fail("MDX_VALUE_INVALID", "MDX 含重复 PIVT 块。");
                 ParsePivots(chunk, model, limits);
@@ -606,6 +617,9 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
             result.diagnostics.push_back({DiagnosticSeverity::Warning, kSubsystem, "MDX_GEOA_DUPLICATE",
                 "geoset=" + std::to_string(geosetId) + "：有多条 GEOA，按文件顺序使用最后一条。", std::nullopt});
         AppendPremDiagnostics(result);
+        if (!result.value->textureAnimationIssue.empty())
+            result.diagnostics.push_back({DiagnosticSeverity::Warning, kSubsystem, "MDX_TXAN_UNINTERPRETED",
+                "贴图动画块未采用，引用它的材质层保持静态坐标：" + result.value->textureAnimationIssue, std::nullopt});
         for (std::size_t index = 0; index < result.value->sequences.size(); ++index) {
             const auto& sequence = result.value->sequences[index];
             if (!sequence.Usable()) result.diagnostics.push_back({DiagnosticSeverity::Warning, kSubsystem,
@@ -749,10 +763,9 @@ Result<std::vector<std::uint32_t>> SampleMdxLayerTextureIds(const MdxModel& mode
                 if (layer.duplicateTextureByteOffset || !layer.duplicateTextureTracks.empty())
                     return reject("MDX_MATERIAL_TEXTURE_UNINTERPRETED", layer.duplicateTextureByteOffset
                         ? layer.duplicateTextureByteOffset : layer.duplicateTextureTracks.front().sourceByteOffset);
-                if (layer.textureAnimationId != UINT32_MAX || layer.coordId != 0)
-                    return reject("MDX_MATERIAL_TEXTURE_UNINTERPRETED", layer.staticTextureIdByteOffset
-                        + (layer.textureAnimationId != UINT32_MAX ? 4 : 8),
-                        layer.textureAnimationId != UINT32_MAX ? layer.textureAnimationId : layer.coordId);
+                // TXAN 只改坐标，不影响贴图ID选择；非零坐标组仍未解释。
+                if (layer.coordId != 0)
+                    return reject("MDX_MATERIAL_TEXTURE_UNINTERPRETED", layer.staticTextureIdByteOffset + 8, layer.coordId);
                 if (layer.textureId >= model.textures.size())
                     return reject("MDX_MATERIAL_TEXTURE_REFERENCE_INVALID", layer.staticTextureIdByteOffset, layer.textureId);
                 if (!layer.animatedTexture) {

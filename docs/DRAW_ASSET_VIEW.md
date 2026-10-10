@@ -45,7 +45,7 @@ WarVK 不得通过 `Detail::ModelAccess`、私有 `ModelData`、编译器布局�
 | 法线蒙皮 | `SkinPreviewGeoset` 和 FORGE `SkinModel.hlsl` 对组矩阵3×3结果归一化；不是逆转置 | **预览规则，与原版不同**：已保存的 native kernel 使用同组3×3、不加平移，该 kernel 不做归一化。本轮保持现有行为；不推断原版后续照明永不归一化 |
 | GEOA alpha/RGB | 原 geoset 顺序、静态值及当前已支持KGAO/KGAC通用预览；BGR读取后转RGB | 只有同输入核心参考对拍，不构成原版逐帧颜色签收 |
 | 材质动画 | DTO记录KMTA/KMTF等存在标记；层alpha/textureId仍是静态入口 | 不能把动画标记当完整轨迹求值或材质可绘制；动态材质需后续版本与同帧合同 |
-| UV与纹理动画 | DTO目前提供首组UV与静态层引用 | 多UV层、TXAN求值及coordId完整映射尚未提供；缺失不使用默认UV补齐 |
+| UV与纹理动画 | DTO目前提供首组UV与静态层引用；TXAN 由材质贴图 sidecar 逐帧求值为层 UV 仿射（0.1.19） | 多UV层及coordId完整映射尚未提供；缺失不使用默认UV补齐 |
 | 过滤、深度、剔除、采样 | DTO保存filterMode/shadingFlags与纹理flags，宿主后端维护现有规则 | 各后端画面等价尚需独立验证，不从字段相同推断执行顺序、深度/混合/alpha-test相同 |
 | 节点与附属消费者 | 经典公共节点参与姿态父链 | 附件、事件、粒子/条带及碰撞等消费者不因骨架可求值就自动支持共享绘制；不得据此跳过原版计算 |
 

@@ -98,6 +98,8 @@ public:
     [[nodiscard]] bool TextureChannelsEnabled() const noexcept;
     // 绝对TEXS ID，不经float；唯一material/layer序，沿同一PoseReceipt，失败为空。
     [[nodiscard]] std::span<const std::uint32_t> LayerTextureIds(std::uint32_t instanceIndex) const noexcept;
+    // 与 LayerTextureIds 同序同借用期；无 TXAN 的层为单位变换。
+    [[nodiscard]] std::span<const UvTransform> LayerUvTransforms(std::uint32_t instanceIndex) const noexcept;
     [[nodiscard]] std::span<const MaterialLayerIssue> TextureIssues(std::uint32_t instanceIndex) const noexcept;
     [[nodiscard]] std::span<const PoseDiagnostic> Diagnostics(std::uint32_t instanceIndex) const noexcept;
     // 与对应姿势相同的借用期；严格模式/整实例失败为空，非空表示局部预览。

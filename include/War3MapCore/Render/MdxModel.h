@@ -199,6 +199,15 @@ struct MdxBone : MdxNode {
     std::uint32_t geosetAnimationId = UINT32_MAX;
 };
 
+// TXAN 贴图坐标动画：KTAT/KTAR/KTAS 与节点轨迹同一按键格式（原版用同一组节点轨迹编译器）。
+// sourceByteOffset 指向条目的包含式大小字段；材质层按 textureAnimationId 引用。
+struct MdxTextureAnimation {
+    std::uint64_t sourceByteOffset = 0;
+    std::optional<MdxNodeTrack<3>> translation; // KTAT
+    std::optional<MdxNodeTrack<4>> rotation;    // KTAR，四元数 x/y/z/w
+    std::optional<MdxNodeTrack<3>> scaling;     // KTAS
+};
+
 // 光源动画按键；Hermite/Bezier 的切线读取后丢弃，采样方按线性处理。
 struct MdxColorKey {
     std::int32_t frame = 0;
@@ -313,6 +322,9 @@ struct MdxModel {
     std::vector<std::uint32_t> globalSequences; // GLBS 周期，毫秒；索引由节点轨迹引用
     std::vector<MdxTexture> textures;
     std::vector<MdxMaterial> materials;
+    std::vector<MdxTextureAnimation> textureAnimations; // TXAN 文件顺序
+    // TXAN 块格式无法解释时整块不采用并在此说明；其余几何与材质照常读取，引用层保持静态坐标。
+    std::string textureAnimationIssue;
     std::vector<MdxGeoset> geosets;
     std::vector<MdxLight> lights;
     std::vector<MdxBone> bones;

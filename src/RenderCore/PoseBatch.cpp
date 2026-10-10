@@ -50,6 +50,7 @@ struct MaterialBatchData {
 struct TextureBatchData {
     std::vector<CompiledMaterialTextures> assets;
     std::vector<std::uint32_t> textureIds;
+    std::vector<UvTransform> uvTransforms; // 与 textureIds 同长同序
     std::vector<Range32> ranges;
     std::vector<MaterialLayerIssue> issues;
     std::uint64_t storageBytes = 0;
@@ -296,12 +297,13 @@ War3Map::Result<PoseBatchEvaluator> PoseBatchEvaluator::Create(
         if (textureAssets[i].MaterialLayerCount() != assets[i].MaterialLayerCount()) return failure(Code::OutputRangeInvalid);
     }
     const auto bytes = sizeof(TextureBatchData) + textureAssets.size() * sizeof(CompiledMaterialTextures)
-        + static_cast<std::uint64_t>(textures.maxLayerValues) * sizeof(std::uint32_t)
+        + static_cast<std::uint64_t>(textures.maxLayerValues) * (sizeof(std::uint32_t) + sizeof(UvTransform))
         + static_cast<std::uint64_t>(limits.maxInstances) * (sizeof(Range32) + sizeof(MaterialLayerIssue));
     if (bytes > limits.maxBytes - result.value->StorageBytes()) return failure(Code::CapacityExceeded);
     try {
         auto data = std::make_unique<TextureBatchData>(); data->assets.assign(textureAssets.begin(), textureAssets.end());
-        data->textureIds.resize(textures.maxLayerValues); data->ranges.resize(limits.maxInstances);
+        data->textureIds.resize(textures.maxLayerValues); data->uvTransforms.resize(textures.maxLayerValues);
+        data->ranges.resize(limits.maxInstances);
         data->issues.resize(limits.maxInstances); data->storageBytes = bytes;
         result.value->textures_ = std::move(data); return result;
     } catch (const std::bad_alloc&) { return failure(Code::AllocationFailed); }
@@ -385,7 +387,8 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
     if (!overrides.empty()) return {Code::OverrideUnsupported, 0, 0};
     if (requests.size() > data.limits.maxInstances) return {Code::CapacityExceeded, 0, 0};
     if (Overlaps(externalGroups, data.groups) || (materials_ && ByteOverlaps(externalGroups, std::span(materials_->alphas)))
-        || (textures_ && ByteOverlaps(externalGroups, std::span(textures_->textureIds))))
+        || (textures_ && (ByteOverlaps(externalGroups, std::span(textures_->textureIds))
+            || ByteOverlaps(externalGroups, std::span(textures_->uvTransforms)))))
         return {Code::RequestInvalid, 0, 0};
     std::uint64_t nodesNeeded = 0, groupsNeeded = 0, alphasNeeded = 0, layersNeeded = 0;
     for (std::size_t i = 0; i < requests.size(); ++i) {
@@ -452,7 +455,8 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         if (e.Good() && textures_) {
             const auto& source = *MaterialTextureAccess::Get(textures_->assets[r.assetIndex]);
             (void)EvaluateMaterialTextures(source, r.sequenceIndex, receipt.sequenceFrame, r.globalElapsedMs,
-                std::span(textures_->textureIds).subspan(layerOffset, layerCount), textures_->issues[i], e);
+                std::span(textures_->textureIds).subspan(layerOffset, layerCount),
+                std::span(textures_->uvTransforms).subspan(layerOffset, layerCount), textures_->issues[i], e);
         }
         if (e.Good() && data.lastVersion == UINT64_MAX) e.Fail(Code::VersionExhausted);
         if (!e.Good()) {
@@ -594,6 +598,11 @@ std::span<const std::uint32_t> PoseBatchEvaluator::LayerTextureIds(std::uint32_t
     if (!data_ || !textures_ || index >= data_->active || data_->receipts[index].error != Code::Ok) return {};
     const auto range = textures_->ranges[index];
     return std::span<const std::uint32_t>(textures_->textureIds).subspan(range.offset, range.count);
+}
+std::span<const UvTransform> PoseBatchEvaluator::LayerUvTransforms(std::uint32_t index) const noexcept {
+    if (!data_ || !textures_ || index >= data_->active || data_->receipts[index].error != Code::Ok) return {};
+    const auto range = textures_->ranges[index];
+    return std::span<const UvTransform>(textures_->uvTransforms).subspan(range.offset, range.count);
 }
 std::span<const MaterialLayerIssue> PoseBatchEvaluator::TextureIssues(std::uint32_t index) const noexcept {
     if (!data_ || !textures_ || index >= data_->active || textures_->issues[index].error == Code::Ok) return {};

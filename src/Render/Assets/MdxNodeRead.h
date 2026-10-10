@@ -108,6 +108,36 @@ inline void ParsePivots(Reader reader, MdxModel& model, const MdxLimits& limits)
     }
 }
 
+// TXAN：每条为包含式大小 + 可选 KTAT/KTAR/KTAS；按键格式与节点轨迹相同，计入同一按键总预算。
+inline void ParseTextureAnimations(Reader reader, MdxModel& model, const MdxLimits& limits, std::size_t& totalKeys) {
+    if (!model.textureAnimations.empty()) Fail("MDX_VALUE_INVALID", "MDX 含重复 TXAN 块。");
+    while (reader.Remaining() != 0) {
+        if (model.textureAnimations.size() >= limits.maxTextures) Fail("MDX_LIMIT", "贴图动画数量超过上限。");
+        const auto start = reader.Position();
+        const auto size = reader.U32("贴图动画大小");
+        if (size < 4 || size - 4 > reader.Remaining()) Fail("MDX_SIZE_INVALID", "贴图动画大小无效。");
+        auto payload = reader.Until(start + size, "贴图动画");
+        MdxTextureAnimation animation;
+        animation.sourceByteOffset = start;
+        while (payload.Remaining() != 0) {
+            if (payload.Remaining() < 16) Fail("MDX_SIZE_INVALID", "贴图动画轨迹头不完整。");
+            const auto tag = payload.Tag("贴图动画轨迹");
+            if (tag == "KTAT") {
+                if (animation.translation) Fail("MDX_VALUE_INVALID", "贴图动画含重复 KTAT 轨迹。");
+                animation.translation = ReadNodeTrack<3>(payload, limits, totalKeys, "贴图平移轨迹");
+            } else if (tag == "KTAR") {
+                if (animation.rotation) Fail("MDX_VALUE_INVALID", "贴图动画含重复 KTAR 轨迹。");
+                animation.rotation = ReadNodeTrack<4>(payload, limits, totalKeys, "贴图旋转轨迹");
+            } else if (tag == "KTAS") {
+                if (animation.scaling) Fail("MDX_VALUE_INVALID", "贴图动画含重复 KTAS 轨迹。");
+                animation.scaling = ReadNodeTrack<3>(payload, limits, totalKeys, "贴图缩放轨迹");
+            } else Fail("MDX_TAG_MISMATCH", "贴图动画含未知轨迹 " + tag + "。");
+        }
+        model.textureAnimations.push_back(std::move(animation));
+        reader.Skip(size - 4, "贴图动画");
+    }
+}
+
 
 // 有外层包含式长度的节点：负载只检查最小固定长度，之后按外层大小跳过。
 // 公共 Node 由独立子 reader 限定，坏大小不能读进下一对象或下一个顶层块。
