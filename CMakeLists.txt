@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Copyright (C) 2026 CallDisaster
 cmake_minimum_required(VERSION 3.24)
-project(War3RenderCore VERSION 0.1.17 LANGUAGES CXX)
+project(War3RenderCore VERSION 0.1.18 LANGUAGES CXX)
 option(WAR3_RENDER_CORE_BUILD_TESTS "构建可移植 CPU 回归" ${PROJECT_IS_TOP_LEVEL})
 option(WAR3_RENDER_CORE_BUILD_TOOLS "构建纯数据黄金夹具工具" ${PROJECT_IS_TOP_LEVEL})
 set(WAR3_RENDER_CORE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")

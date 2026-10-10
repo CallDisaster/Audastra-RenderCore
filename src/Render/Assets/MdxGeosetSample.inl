@@ -27,8 +27,7 @@ std::optional<std::array<float,N>> GeoInterpolate(const Key& left, const Key& ri
 }
 template<std::size_t N, class Keys>
 Result<std::array<float,N>> SampleGeoReference(const MdxModel& model, const MdxGeosetAlphaRequest& request,
-    std::array<float,N> fallback, bool hasTrack, std::uint32_t mode, std::uint32_t global, const Keys& keys,
-    bool gameRanges = true) {
+    std::array<float,N> fallback, bool hasTrack, std::uint32_t mode, std::uint32_t global, const Keys& keys) {
     using Out = Result<std::array<float,N>>;
     const auto reject = [](const char* code) { return Out::Failure("Mdx.Geoset", code,"GEOA 轨迹不满足有界预览合同。"); };
     constexpr bool rgb = N == 3;
@@ -59,8 +58,8 @@ Result<std::array<float,N>> SampleGeoReference(const MdxModel& model, const MdxG
                 (mode>=2 && (!std::isfinite(GeoComponent(key.inTangent,c)) || !std::isfinite(GeoComponent(key.outTangent,c)))))
                 return reject(number);
         }
-        // 全局轨迹（6F77B1E0 全键查找）与材质透明度仍须严格递增；GEOA 非全局键按原版不排序、不拒绝。
-        if ((isGlobal || !gameRanges) && !first && key.frame<=previous) return reject("MDX_GEOA_KEYS_INVALID");
+        // 全局轨迹（6F77B1E0 全键查找）仍须严格递增；GEOA/KMTA 非全局键按原版不排序、不拒绝。
+        if (isGlobal && !first && key.frame<=previous) return reject("MDX_GEOA_KEYS_INVALID");
         first=false; previous=key.frame;
         if (isGlobal && key.frame-keys.front().frame>INT32_MAX)
             return reject("MDX_GEOA_GLOBAL_SPAN_UNSUPPORTED");
@@ -74,7 +73,7 @@ Result<std::array<float,N>> SampleGeoReference(const MdxModel& model, const MdxG
         const auto sampled = GeoInterpolate<N>(left, right, t, mode);
         return sampled ? Out::Success(*sampled) : reject(number);
     };
-    if (!isGlobal && gameRanges) {
+    if (!isGlobal) {
         // 原版逐动作区间 + 区间内线性顺序查找；单键直接取值，首键前比例为负，跨度为负加动作长度。
         std::size_t offset = 0, count = 0;
         War3RenderCore::ForEachGameSequenceRange(keys, model.sequences, [&](std::size_t index, std::size_t begin, std::size_t size) {
@@ -89,7 +88,7 @@ Result<std::array<float,N>> SampleGeoReference(const MdxModel& model, const MdxG
         return curve(keys[window.left], keys[window.right],
             static_cast<double>(window.offset) / static_cast<double>(window.span));
     }
-    // 全局轨迹与材质透明度：严格递增键按时间扫描；材质只取当前动作 [start,end] 内的键。
+    // 全局轨迹：严格递增键按时间扫描。
     if (isGlobal && keys.size() == 1) return constant(keys.front());
     using Key = typename Keys::value_type;
     const Key* left = nullptr; const Key* right = nullptr; const Key* soleKey = nullptr;

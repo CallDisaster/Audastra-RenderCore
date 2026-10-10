@@ -283,7 +283,9 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
                 budget.Charge(1, bytes);
             const MaterialLayerLayout layout{m, l, layer.animatedAlpha ? layer.alphaSourceByteOffset : layer.staticAlphaByteOffset};
             out->materialLayouts.push_back(layout);
-            out->materialAlphas.push_back(CompileMaterialAlpha(layer, material.hasUninterpretedData, layout, model.globalSequences));
+            out->materialAlphas.push_back(CompileMaterialAlpha(layer, material.hasUninterpretedData, layout,
+                model.globalSequences, model.sequences));
+            budget.Charge(out->materialAlphas.back().alpha.ranges.size(), sizeof(Range32) + sizeof(std::uint8_t));
             if (const auto& prepared = out->materialAlphas.back().identicalDuplicates) {
                 Require(prepared->warnings.size() <= UINT32_MAX - out->materialDuplicateWarnings, Code::MaterialAlphaLimit);
                 out->materialDuplicateWarnings += static_cast<std::uint32_t>(prepared->warnings.size());

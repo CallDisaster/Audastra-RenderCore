@@ -12,7 +12,7 @@ float Component(float v,std::size_t) { return v; }
 float Component(const Vec3& v,std::size_t c) { return v[c]; }
 // sequences 非空（GEOA）时，非全局轨迹按原版 1.27a 规则编译：KGAO/KGAC 编译（6F780270/6F780470）同样调用
 // 6F78A090 切逐动作区间，不排序源键；取值走 6F789EB0 顺序查找与 6F77A720/6F78A1B0 的接缝插值。
-// 材质透明度暂不传 sequences，保持原严格递增合同。
+// 材质透明度 KMTA 同样经 6F785260 → 6F780270 编译，传入 sequences 后规则相同。
 template<std::size_t N,class Keys>
 GeoChannel<N> CompileChannel(std::array<float,N> fallback,bool hasTrack,std::uint32_t mode,
     std::uint32_t global,const Keys& keys,const std::vector<std::uint32_t>& periods,
@@ -122,13 +122,14 @@ std::array<float,N> Sample(const GeoChannel<N>& channel,const Sequence& sequence
 }
 }
 Alpha CompileMaterialScalarAlpha(const War3Map::Render::MdxLayer& source,
-    const std::vector<std::uint32_t>& periods, bool identicalDuplicatesPreview) {
+    const std::vector<std::uint32_t>& periods, bool identicalDuplicatesPreview,
+    const std::vector<War3Map::Render::MdxSequence>* sequences) {
     return CompileChannel<1>({source.alpha}, source.animatedAlpha, source.alphaInterpolation,
-        source.alphaGlobalSequence, source.alphaKeys, periods, identicalDuplicatesPreview);
+        source.alphaGlobalSequence, source.alphaKeys, periods, identicalDuplicatesPreview, sequences);
 }
-float SampleScalarAlpha(const Alpha& channel, const Sequence& sequence, std::uint32_t frame,
+float SampleScalarAlpha(const Alpha& channel, const Sequence& sequence, std::uint32_t sequenceIndex, std::uint32_t frame,
     std::uint64_t global, Evaluation& e, bool identicalDuplicatesPreview) noexcept {
-    return Sample(channel, sequence, 0, frame, global, e, identicalDuplicatesPreview)[0];
+    return Sample(channel, sequence, sequenceIndex, frame, global, e, identicalDuplicatesPreview)[0];
 }
 Alpha CompileGeosetAlpha(const std::optional<War3Map::Render::MdxGeosetAnimation>& source,const std::vector<std::uint32_t>& periods,
     const std::vector<War3Map::Render::MdxSequence>& sequences) {

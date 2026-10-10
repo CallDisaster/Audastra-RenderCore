@@ -1,5 +1,8 @@
 # KMTA 与 PREM 的显式预览合同
 
+> 0.1.18 起 KMTA 非全局轨迹按原版逐动作区间取值（见 README），同帧键直接合法，
+> 下面的“同帧同值预览”不再触发；该策略参数仅为接口兼容保留，计划移除。PREM 部分不变。
+
 0.1.13 的默认材质求值保持 Strict。第九工厂参数
 `MaterialAlphaKeySamplingPolicy::IdenticalDuplicatesPreview` 仅在材质通道启用时可用。
 资格检查覆盖完整轨迹：模式0至3、全部使用的值/切线有限、非全局、帧序非递减；

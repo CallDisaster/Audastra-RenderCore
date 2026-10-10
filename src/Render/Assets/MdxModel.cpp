@@ -669,7 +669,7 @@ Result<std::vector<float>> SampleMdxLayerAlphas(const MdxModel& model, const Mdx
                 if (material.hasUninterpretedData || layer.hasUninterpretedData)
                     return Out::Failure("Mdx.MaterialAlpha", "MDX_MATERIAL_ALPHA_UNINTERPRETED", "材质/层含未解释数据；不取静态alpha成功值。");
                 auto sampled = SampleGeoReference<1>(model, request, {layer.alpha}, layer.animatedAlpha,
-                    layer.alphaInterpolation, layer.alphaGlobalSequence, layer.alphaKeys, false);
+                    layer.alphaInterpolation, layer.alphaGlobalSequence, layer.alphaKeys); // KMTA 与 GEOA 同一原版逐动作区间
                 if (!sampled.Succeeded()) {
                     for (auto& diagnostic : sampled.diagnostics) {
                         diagnostic.subsystem = "Mdx.MaterialAlpha";

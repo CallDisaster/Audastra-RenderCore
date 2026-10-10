@@ -47,7 +47,8 @@ std::uint64_t MaterialAlphaDuplicateStorageBytes(const War3Map::Render::MdxLayer
         + duplicateCount * sizeof(MaterialAlphaPreviewWarning);
 }
 CompiledMaterialChannel CompileMaterialAlpha(const War3Map::Render::MdxLayer& layer,
-    bool materialUninterpreted, MaterialLayerLayout layout, const std::vector<std::uint32_t>& periods) {
+    bool materialUninterpreted, MaterialLayerLayout layout, const std::vector<std::uint32_t>& periods,
+    const std::vector<War3Map::Render::MdxSequence>& sequences) {
     CompiledMaterialChannel out;
     out.issue.materialIndex = layout.materialIndex; out.issue.layerIndex = layout.layerIndex;
     out.issue.sourceByteOffset = layer.staticAlphaByteOffset;
@@ -56,12 +57,12 @@ CompiledMaterialChannel CompileMaterialAlpha(const War3Map::Render::MdxLayer& la
         out.alpha.error = out.issue.error = Code::MaterialAlphaUninterpreted;
         out.issue.sourceByteOffset = layout.sourceByteOffset; return out;
     }
-    out.alpha = CompileMaterialScalarAlpha(layer, periods);
+    out.alpha = CompileMaterialScalarAlpha(layer, periods, false, &sequences);
     out.alpha.error = MaterialCode(out.alpha.error); out.issue.error = out.alpha.error;
     const auto compatibleBytes = out.alpha.error == Code::MaterialAlphaKeysInvalid
         ? MaterialAlphaDuplicateStorageBytes(layer, false) : 0;
     if (compatibleBytes) {
-        auto compatible = CompileMaterialScalarAlpha(layer, periods, true);
+        auto compatible = CompileMaterialScalarAlpha(layer, periods, true, &sequences);
         if (compatible.error == Code::Ok) {
             auto prepared = std::make_unique<MaterialAlphaDuplicatePreview>();
             prepared->alpha = std::move(compatible);
@@ -104,7 +105,8 @@ CompiledMaterialChannel CompileMaterialAlpha(const War3Map::Render::MdxLayer& la
         const auto badValue = !std::isfinite(key.value);
         const auto badIn = layer.alphaInterpolation >= 2 && !std::isfinite(key.inTangent);
         const auto badOut = layer.alphaInterpolation >= 2 && !std::isfinite(key.outTangent);
-        const auto descending = !first && key.frame <= previous;
+        // 非全局轨迹按原版逐动作区间取键，源键序本身不是编译错误；只为全局轨迹定位逆序键。
+        const auto descending = layer.alphaGlobalSequence != NoIndex && !first && key.frame <= previous;
         const auto badSpan = layer.alphaGlobalSequence != NoIndex &&
             static_cast<std::uint64_t>(key.frame) - layer.alphaKeys.front().frame > INT32_MAX;
         if (badValue || badIn || badOut || descending || badSpan) {
@@ -119,19 +121,22 @@ CompiledMaterialChannel CompileMaterialAlpha(const War3Map::Render::MdxLayer& la
     }
     return out;
 }
-bool EvaluateMaterialAlphas(const ModelData& model, const Sequence& sequence, std::uint32_t frame,
+bool EvaluateMaterialAlphas(const ModelData& model, std::uint32_t sequenceIndex, std::uint32_t frame,
     std::uint64_t global, std::span<float> output, MaterialLayerIssue& issue, Evaluation& e,
     MaterialAlphaKeySamplingPolicy keyPolicy, std::span<MaterialAlphaPreviewWarning> warnings,
     std::uint32_t& warningCount) noexcept {
     warningCount = 0;
     if (output.size() != model.materialAlphas.size()) { e.Fail(Code::OutputRangeInvalid); return false; }
+    if (sequenceIndex >= model.sequences.size()) { e.Fail(Code::PoseSequenceInvalid); return false; }
+    const auto& sequence = model.sequences[sequenceIndex];
     for (std::size_t i = 0; i < model.materialAlphas.size(); ++i) {
         const auto& source = model.materialAlphas[i];
         const bool compatible = keyPolicy == MaterialAlphaKeySamplingPolicy::IdenticalDuplicatesPreview
             && source.identicalDuplicates;
         const auto& channel = compatible ? source.identicalDuplicates->alpha : source.alpha;
         Evaluation local{};
-        output[i] = SampleScalarAlpha(channel, sequence, frame, global, local, compatible);
+        local.nodeKeys = e.nodeKeys; // 逐动作区间含逆序边时与 GEOA/节点同一策略：严格拒绝、原序预览按原版查找。
+        output[i] = SampleScalarAlpha(channel, sequence, sequenceIndex, frame, global, local, compatible);
         if (local.Good()) {
             if (compatible) {
                 const auto& originals = source.identicalDuplicates->warnings;
@@ -149,7 +154,15 @@ bool EvaluateMaterialAlphas(const ModelData& model, const Sequence& sequence, st
         }
         issue = source.issue; issue.error = MaterialCode(local.error);
         // 运行期边界/数值错误保留原左键的物理身份；不将采样结果伪装成源值。
-        if (channel.error == Code::Ok && !source.sources.empty()) {
+        if (channel.error == Code::Ok && !source.sources.empty() && !channel.global && !channel.ranges.empty()) {
+            // 逐动作区间：定位到当前区间首个原键（键序未排序，不能二分）。
+            const auto range = sequenceIndex < channel.ranges.size() ? channel.ranges[sequenceIndex] : Range32{};
+            const auto index = range.count ? static_cast<std::size_t>(range.offset) : std::size_t{0};
+            if (index < source.sources.size()) {
+                const auto& original = source.sources[index]; issue.sourceByteOffset = original.valueOffset;
+                issue.sourceFrame = original.frame; issue.sourceValueBits = original.valueBits;
+            }
+        } else if (channel.error == Code::Ok && !source.sources.empty()) {
             const auto time = channel.global ? (channel.period ? global % channel.period : 0u) : frame;
             const auto begin = channel.global ? channel.keys.begin()
                 : std::lower_bound(channel.keys.begin(), channel.keys.end(), sequence.start,

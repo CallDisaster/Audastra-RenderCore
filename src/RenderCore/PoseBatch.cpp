@@ -445,7 +445,7 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
             std::span(data.groups).subspan(groupOffset, groupCount), std::span(data.alphas).subspan(alphaOffset, alphaCount), std::span(data.colors).subspan(alphaOffset,alphaCount), receipt, e, preview_.get(), issues, issueCount);
         if (e.Good() && materials_) {
             const auto& model = *ModelAccess::Get(*asset);
-            (void)EvaluateMaterialAlphas(model, model.sequences[r.sequenceIndex], receipt.sequenceFrame, r.globalElapsedMs,
+            (void)EvaluateMaterialAlphas(model, r.sequenceIndex, receipt.sequenceFrame, r.globalElapsedMs,
                 std::span(materials_->alphas).subspan(layerOffset, layerCount), materials_->issues[i], e,
                 materialAlphaKeys_, materialWarningStorage, materialWarningCount);
         }
