@@ -221,7 +221,7 @@ struct MdxScalarKey {
 // LITE 光源（昼夜 DNC 模型用平行光表达太阳）。朝向取节点旋转轨迹的第一个按键。
 struct MdxLight {
     std::string name;
-    std::uint32_t type = 0;                     // 0 点光、1 平行光、2 环境光
+    std::uint32_t type = 0;                     // 0 点光、1 平行光、2 环境光；其它原值保留并给出读取警告
     std::array<float, 4> rotation{0, 0, 0, 1};  // 四元数 x, y, z, w
     std::array<float, 3> color{1, 1, 1};        // 静态值，RGB
     float intensity = 1;
@@ -231,13 +231,14 @@ struct MdxLight {
     std::vector<MdxScalarKey> intensityKeys, ambientIntensityKeys; // KLAI、KLBI
 };
 
-// 布局名描述本读取器实际消费的文件字节；type1/3 尚不能等同于原版运行时形状类型。
+// 布局描述文件负载，不自动赋予精准碰撞支持。旧的未验证枚举值保留兼容，读取器不再产生它们。
 enum class MdxCollisionLayout : std::uint32_t {
     BoxVertices24, SphereCenterRadius16,
-    UnverifiedType1Vertices24, UnverifiedType3VerticesRadius28
+    UnverifiedType1Vertices24, UnverifiedType3VerticesRadius28,
+    Type1CenterHeightRadius20, Type3Scalars8
 };
 enum class MdxCollisionSupport : std::uint32_t {
-    Supported, LayoutAmbiguous, NonFinite, InvalidRadius
+    Supported, LayoutAmbiguous, NonFinite, InvalidRadius, GeometryUnsupported
 };
 struct MdxCollisionShape {
     std::uint32_t sourceIndex = 0; // 跨 CLID 块的原始顺序，包括无法用于点选的形状
@@ -249,6 +250,8 @@ struct MdxCollisionShape {
     MdxCollisionLayout layout = MdxCollisionLayout::BoxVertices24;
     // Supported 仅表示已证的 type0/2 布局与有限几何输入，不表示原版游戏点选已验收。
     MdxCollisionSupport support = MdxCollisionSupport::LayoutAmbiguous;
+    float height = 0; // type1：中心在 vertices[0]，随后为沿 z 的高度与 radius；不构造第二端点。
+    std::array<float, 2> scalarParameters{}; // type3：只有两个原标量，不将其解释成顶点或半径。
 };
 
 // PREM 旧式模型发射器的只读负载；不执行发射、不访问资源、不赋予保存或原版等价资格。
@@ -291,6 +294,28 @@ struct MdxPremEmitter {
 };
 
 struct MdxModel;
+
+struct MdxNoControllerNodeOrigin {
+    std::uint32_t objectId = 0;
+    std::int32_t parentId = -1;
+    std::uint32_t flags = 0;
+    MdxNodeKind kind = MdxNodeKind::Bone;
+};
+
+// 解析器确认整个源文件没有需要动画控制器的内容；公开模型修改后仍须重新检查资格。
+// 只封存节点身份和PIVT原位，不复制整个文件，也不修正非有限轴心或未知标志。
+class MdxNoControllerStaticSource {
+public:
+    [[nodiscard]] std::span<const MdxNoControllerNodeOrigin> Nodes() const noexcept { return nodes_; }
+    [[nodiscard]] std::span<const std::array<std::uint32_t, 3>> PivotBits() const noexcept { return pivotBits_; }
+    [[nodiscard]] std::uint64_t PivotByteOffset() const noexcept { return pivotByteOffset_; }
+private:
+    MdxNoControllerStaticSource(const MdxModel& model, std::uint64_t pivotByteOffset);
+    std::vector<MdxNoControllerNodeOrigin> nodes_;
+    std::vector<std::array<std::uint32_t, 3>> pivotBits_;
+    std::uint64_t pivotByteOffset_ = 0;
+    friend Result<MdxModel> ParseMdx(std::span<const std::byte>, const MdxLimits&);
+};
 
 // 缺少矩阵组的无控制器静态模型，仅供显式“预览近似”入口。
 // 偏移指向原始文件；零 MTGC/MATS 不改写成虚构骨骼或源矩阵组。
@@ -338,6 +363,9 @@ struct MdxModel {
     std::vector<MdxPremEmitter> premEmitters; // PREM 来源顺序，包含局部 unsupported；nodeId 对应 PIVT。
     // 不可伪造构造的解析来源；消费者仍重新检查当前公开几何与原字节一致。
     std::shared_ptr<const MdxRigidStaticPreviewSource> rigidStaticPreviewSource;
+    // 原版整模型无动画控制器旁路；与缺少MTGC的显式近似预览无关。
+    // 存在该来源时PIVT仍可含原始NaN；仅资格完整的静态矩阵路径允许不使用轴心。
+    std::shared_ptr<const MdxNoControllerStaticSource> noControllerStaticSource;
 };
 
 // 仅用于进程内解析数据，不是插件/IPC 布局；跨边界描述符仍用定宽计数。

@@ -3,6 +3,7 @@
 
 #include "War3MapCore/Render/MdxPose.h"
 #include "MdxRigidStaticPreviewInternal.h"
+#include "MdxNoControllerStatic.h"
 #include "MdxNormalPreview.h"
 #include "../../RenderCore/SourceOrderNodeTrack.h"
 
@@ -424,6 +425,9 @@ MdxPoseSample Sample(const MdxModel& model, const MdxPoseRequest& request,
     const auto elapsed = sequence.flags == 0 && duration != 0
         ? request.sequenceElapsedMs % duration : std::min(request.sequenceElapsedMs, duration);
     const auto frame = static_cast<std::uint32_t>(sequence.start + elapsed);
+    const bool noControllerStatic = MdxNoControllerStaticInternal::Qualified(model);
+    if (noControllerStatic && MdxNoControllerStaticInternal::NeedsCompatibility(model))
+        warnings.push_back(MdxNoControllerStaticInternal::Warning(model));
 
     std::map<std::uint32_t, const MdxNode*> nodes;
     std::size_t totalTrackKeys = 0;
@@ -452,7 +456,7 @@ MdxPoseSample Sample(const MdxModel& model, const MdxPoseRequest& request,
             Fail("MDX_POSE_PARENT_INVALID", "节点父链形成环。");
         if (current->objectId >= model.pivots.size())
             Fail("MDX_POSE_PIVOT_UNAVAILABLE", "节点缺少按 objectId 对齐的 PIVT 轴心。");
-        if ((current->flags & ~(MdxNodeNonTransformFlags(current->kind) | 0xFFu)) != 0)
+        if (!noControllerStatic && (current->flags & ~(MdxNodeNonTransformFlags(current->kind) | 0xFFu)) != 0)
             Fail("MDX_POSE_NODE_FLAGS_UNSUPPORTED", "节点含未实现的继承或变换标志。");
         reverseChain.push_back(current);
         if (current->parentId == -1) break;
@@ -471,6 +475,12 @@ MdxPoseSample Sample(const MdxModel& model, const MdxPoseRequest& request,
         node.objectId = source.objectId;
         node.parentId = source.parentId;
         node.pivot = model.pivots[source.objectId];
+        if (noControllerStatic) {
+            node.localMatrix = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            node.worldMatrix = node.localMatrix;
+            result.chain.push_back(std::move(node));
+            continue;
+        }
         node.translation = SampleTrack(model, source.translation, node.translation, sequence, frame,
             request.globalElapsedMs, source.objectId, "KGTR", warnings, nodeKeys);
         node.rotation = Normalize(SampleTrack(model, source.rotation, node.rotation, sequence, frame,

@@ -104,7 +104,7 @@ struct alignas(8) PoseRequest {
 struct NodePose {
     std::uint32_t objectId = NoIndex;
     std::int32_t parentId = -1;
-    Vec3 pivot{};
+    Vec3 pivot{}; // 原始轴心；UsesNoControllerStatic时可非有限，仅为来源，不能作为有效锚点。
     Vec3 translation{};
     Quaternion rotation{0, 0, 0, 1};
     Vec3 scaling{1, 1, 1};

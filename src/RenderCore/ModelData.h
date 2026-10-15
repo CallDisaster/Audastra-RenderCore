@@ -79,6 +79,7 @@ struct ModelData {
     AssetIdentity identity;
     AssetSource source;
     std::shared_ptr<const War3Map::Render::MdxRigidStaticPreviewSource> rigidStaticPreviewSource;
+    std::shared_ptr<const War3Map::Render::MdxNoControllerStaticSource> noControllerStaticSource;
     std::vector<CompiledNode> nodes;
     std::vector<Sequence> sequences;
     std::vector<GeosetLayout> geosets;

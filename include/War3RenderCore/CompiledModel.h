@@ -37,6 +37,8 @@ public:
     [[nodiscard]] std::span<const GeosetColor> GeosetColors() const noexcept;
     [[nodiscard]] bool SharesStorageWith(const CompiledModel& other) const noexcept;
     [[nodiscard]] bool IsRigidStaticPreview() const noexcept;
+    // 原版整模型无控制器旁路；节点/组保留原拓扑，矩阵不读取可能非有限的来源轴心。
+    [[nodiscard]] bool UsesNoControllerStatic() const noexcept;
 private:
     std::shared_ptr<const Detail::ModelData> data_;
     friend struct Detail::ModelAccess;

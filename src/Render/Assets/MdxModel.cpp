@@ -5,6 +5,7 @@
 #include "MdxNodeRead.h"
 #include "MdxPremRead.h"
 #include "MdxRigidStaticPreviewInternal.h"
+#include "MdxNoControllerStatic.h"
 #include "War3RenderCore/GameKeyRanges.h"
 
 #include <algorithm>
@@ -406,7 +407,8 @@ struct RotationKey {
     std::array<float, 4> quaternion{};
 };
 
-void ParseLights(Reader reader, MdxModel& model, const MdxLimits& limits, std::size_t& totalKeys) {
+void ParseLights(Reader reader, MdxModel& model, const MdxLimits& limits, std::size_t& totalKeys,
+    std::vector<Diagnostic>& diagnostics) {
     const auto color = [](MdxColorKey& key, const std::array<float, 4>& value) { key.rgb = Rgb(value); };
     const auto scalar = [](MdxScalarKey& key, const std::array<float, 4>& value) { key.value = value[0]; };
     while (reader.Remaining() != 0) {
@@ -424,8 +426,8 @@ void ParseLights(Reader reader, MdxModel& model, const MdxLimits& limits, std::s
         light.name = node.name;
         if (node.rotation && !node.rotation->keys.empty()) light.rotation = node.rotation->keys.front().value;
         model.otherNodes.push_back(std::move(node));
+        const auto typeOffset = reader.Position();
         light.type = reader.U32("光源类型");
-        if (light.type > 2) Fail("MDX_VALUE_INVALID", "未知的光源类型。");
         reader.Skip(8, "衰减范围");
         light.color = Rgb({reader.F32("光源颜色"), reader.F32("光源颜色"), reader.F32("光源颜色"), 0});
         light.intensity = reader.F32("光源强度");
@@ -441,14 +443,40 @@ void ParseLights(Reader reader, MdxModel& model, const MdxLimits& limits, std::s
             else Fail("MDX_TAG_MISMATCH", "光源含未知轨迹 " + tag + "。");
         }
         if (reader.Position() != lightEnd) Fail("MDX_SIZE_INVALID", "光源轨迹未对齐光源边界。");
+        // 原版读取完整 U32，创建光源时只区分零与非零；不掩码或改写非标准类型。
+        // 每条光源最多一条警告，数量受共享的 maxMaterials / maxNodes 预算约束。
+        if (light.type > 2) diagnostics.push_back({DiagnosticSeverity::Warning, kSubsystem,
+            "MDX_LIGHT_TYPE_NONSTANDARD", "light=" + std::to_string(model.lights.size())
+                + " type=" + std::to_string(light.type)
+                + "：已保留非标准光源类型；该类型的照明预览未验证。",
+            OriginSpan{{}, typeOffset, 4, {}}});
         model.lights.push_back(std::move(light));
     }
 }
 
 } // namespace
 
+MdxNoControllerStaticSource::MdxNoControllerStaticSource(const MdxModel& model, std::uint64_t pivotByteOffset)
+    : pivotByteOffset_(pivotByteOffset) {
+    nodes_.reserve(MdxNodeCount(model));
+    ForEachMdxNode(model, [&](const MdxNode& node) {
+        nodes_.push_back({node.objectId, node.parentId, node.flags, node.kind});
+    });
+    pivotBits_.reserve(model.pivots.size());
+    for (const auto& pivot : model.pivots) {
+        std::array<std::uint32_t, 3> bits{};
+        for (std::size_t axis = 0; axis < 3; ++axis) bits[axis] = std::bit_cast<std::uint32_t>(pivot[axis]);
+        pivotBits_.push_back(bits);
+    }
+}
+
+struct NoControllerRead {
+    bool qualified = false;
+    std::uint64_t pivotByteOffset = 0;
+};
+
 static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, const MdxLimits& limits,
-    std::vector<MdxRigidStaticGeosetOrigin>* rigidOrigins) {
+    std::vector<MdxRigidStaticGeosetOrigin>* rigidOrigins, NoControllerRead* staticRead = nullptr) {
     try {
         constexpr MdxLimits hard{};
         if (limits.maxInputBytes > hard.maxInputBytes || limits.maxGeosets > hard.maxGeosets
@@ -467,18 +495,24 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
         if (file.Tag("文件头") != "MDLX") Fail("MDX_MAGIC", "不是 MDX 文件（缺少 MDLX 文件头）。");
         MdxModel model;
         std::vector<GeosetAnimation> animations;
+        std::vector<Diagnostic> diagnostics;
         std::size_t totalVertices = 0, totalIndices = 0, totalBoneKeys = 0;
         bool seenPivots = false;
+        std::uint64_t pivotByteOffset = 0;
+        std::string staticSourceIssue;
         std::size_t retainedMaterialAlphaKeys = 0, retainedMaterialTextureBytes = 0;
         while (file.Remaining() != 0) {
             const auto tag = file.Tag("块标记");
             const auto size = file.U32("块大小");
             file.Need(size, "块内容");
+            if (!MdxNoControllerStaticInternal::AllowedChunk(tag) && staticSourceIssue.empty())
+                staticSourceIssue = "源文件含控制器或未解释块 " + tag;
             if (rigidOrigins && !MdxRigidStaticPreviewInternal::AllowedChunk(tag))
                 Fail("MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED", "预览近似不接纳控制器或未识别块 " + tag
                     + "，offset=" + std::to_string(file.Position() - 8) + "。");
             const Reader chunk(bytes, file.Position(), file.Position() + size);
             if (tag == "VERS") {
+                if (size != 4 && staticSourceIssue.empty()) staticSourceIssue = "VERS含未解释尾部";
                 auto version = chunk;
                 model.version = version.U32("版本");
                 if (model.version != kClassicVersion)
@@ -486,7 +520,9 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
             } else if (tag == "MODL") {
                 auto header = chunk;
                 model.name = header.FixedString(80, "模型名称");
-                header.Skip(260, "动画文件名");
+                const auto animationFile = header.FixedString(260, "动画文件名");
+                if ((size != 372 || !animationFile.empty()) && staticSourceIssue.empty())
+                    staticSourceIssue = "MODL含外部动画文件或未解释尾部";
                 model.boundsRadius = header.F32("包围半径");
                 for (auto& axis : model.minimum) axis = header.F32("包围盒");
                 for (auto& axis : model.maximum) axis = header.F32("包围盒");
@@ -508,7 +544,7 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
                 animations.insert(animations.end(), std::make_move_iterator(parsed.begin()),
                     std::make_move_iterator(parsed.end()));
             } else if (tag == "LITE") {
-                ParseLights(chunk, model, limits, totalBoneKeys);
+                ParseLights(chunk, model, limits, totalBoneKeys, diagnostics);
             } else if (tag == "BONE") {
                 if (model.version != kClassicVersion) Fail("MDX_VERSION_UNSUPPORTED", "BONE 之前缺少版本 800 的 VERS 块。");
                 ParseBones(chunk, model, limits, totalBoneKeys);
@@ -537,6 +573,7 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
                 }
             } else if (tag == "PIVT") {
                 if (seenPivots) Fail("MDX_VALUE_INVALID", "MDX 含重复 PIVT 块。");
+                pivotByteOffset = file.Position();
                 ParsePivots(chunk, model, limits);
                 seenPivots = true;
             } else {
@@ -604,6 +641,9 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
         // 并逐个报告被覆盖的 geoset；不把整块几何体当作未解释数据隐藏。
         std::vector<std::uint32_t> overridden;
         for (const auto& animation : animations) {
+            // 原版控制器扫描所有GEOA；不能让后来的静态条目掩盖前面的动态条目。
+            if (!MdxNoControllerStaticInternal::StaticAnimation(animation.value) && staticSourceIssue.empty())
+                staticSourceIssue = "源GEOA含轨迹或未解释语义（包括被后项覆盖的条目）";
             if (animation.geosetId >= model.geosets.size()) Fail("MDX_REFERENCE_INVALID", "geoset 动画引用了不存在的 geoset。");
             auto& geoset = model.geosets[animation.geosetId];
             if (geoset.animation.has_value()
@@ -612,7 +652,20 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
             geoset.visibleInStand = StandAlpha(animation.value, stand) > 0.0f;
             geoset.animation = animation.value;
         }
+        const auto* staticFieldIssue = MdxNoControllerStaticInternal::FieldIssue(model);
+        const bool staticQualified = staticSourceIssue.empty() && staticFieldIssue == nullptr;
+        for (std::size_t pivot = 0; pivot < model.pivots.size(); ++pivot) {
+            for (std::size_t axis = 0; axis < 3; ++axis) {
+                if (!std::isfinite(model.pivots[pivot][axis]) && !staticQualified)
+                    Fail("MDX_NUMBER_INVALID", "节点轴心非有限：PIVT[" + std::to_string(pivot)
+                        + "][" + std::to_string(axis) + "] offset=" + std::to_string(pivotByteOffset + pivot * 12 + axis * 4)
+                        + "；不能使用整模型无控制器静态路径："
+                        + (staticSourceIssue.empty() ? std::string(staticFieldIssue) : staticSourceIssue) + "。");
+            }
+        }
+        if (staticRead) *staticRead = {staticQualified, pivotByteOffset};
         auto result = Result<MdxModel>::Success(std::move(model));
+        result.diagnostics = std::move(diagnostics);
         for (const auto geosetId : overridden)
             result.diagnostics.push_back({DiagnosticSeverity::Warning, kSubsystem, "MDX_GEOA_DUPLICATE",
                 "geoset=" + std::to_string(geosetId) + "：有多条 GEOA，按文件顺序使用最后一条。", std::nullopt});
@@ -638,7 +691,21 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
 }
 
 Result<MdxModel> ParseMdx(std::span<const std::byte> bytes, const MdxLimits& limits) {
-    return ParseMdxWithPolicy(bytes, limits, nullptr);
+    try {
+        NoControllerRead read;
+        auto result = ParseMdxWithPolicy(bytes, limits, nullptr, &read);
+        if (result.Succeeded() && read.qualified) {
+            result.value->noControllerStaticSource = std::shared_ptr<const MdxNoControllerStaticSource>(
+                new MdxNoControllerStaticSource(*result.value, read.pivotByteOffset));
+            if (MdxNoControllerStaticInternal::NeedsCompatibility(*result.value))
+                result.diagnostics.push_back(MdxNoControllerStaticInternal::Warning(*result.value));
+        }
+        return result;
+    } catch (const std::bad_alloc&) {
+        return Result<MdxModel>::Failure(kSubsystem, "MDX_ALLOCATION", "静态节点来源分配失败。");
+    } catch (const std::length_error&) {
+        return Result<MdxModel>::Failure(kSubsystem, "MDX_ALLOCATION", "静态节点来源超出容器容量。");
+    }
 }
 
 Result<MdxModel> ParseMdxRigidStaticPreview(std::span<const std::byte> bytes, const MdxLimits& limits) {

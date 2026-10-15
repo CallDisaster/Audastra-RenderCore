@@ -5,6 +5,7 @@
 #include "War3MapCore/Render/MdxPose.h"
 #include "War3RenderCore/PoseBatch.h"
 #include "MdxTestModel.h"
+#include "MdxClassicNodeTests.h"
 #include "RigidStaticPreviewFixture.h"
 
 #include <algorithm>
@@ -507,41 +508,6 @@ void TestRigidSkinningPivotAndNormals() {
     SkinRejected(model, {0, 0, 500, 500, {}}, "MDX_SKIN_NORMAL_INVALID");
 }
 
-void TestCollisionMetadata() {
-    MdxTest::Writer w;
-    w.bytes = Build({.selectionGroup = 7, .selectionFlags = 4});
-    w.Tag("CLID"); const auto chunk = w.Begin();
-    for (std::uint32_t type = 0; type < 4; ++type) {
-        const auto node = w.Begin(); w.Fixed("Collision", 80);
-        w.U32(type + 1); w.U32(UINT32_MAX); w.U32(0x2000); w.EndInclusive(node);
-        w.U32(type);
-        for (std::uint32_t word = 0; word < (type == 2 ? 3u : 6u); ++word) w.F32(static_cast<float>(word + 1));
-        if (type == 2 || type == 3) w.F32(7);
-    }
-    w.EndChunk(chunk);
-    const auto parsed = ParseMdx(w.bytes);
-    Require(parsed.Succeeded() && parsed.value->collisionShapes.size() == 4, "CLID 保留旧四种边界");
-    Require(parsed.value->geosets[0].selectionGroup == 7 && parsed.value->geosets[1].selectionFlags == 4, "GEOS 选择原值");
-    for (std::uint32_t type = 0; type < 4; ++type) {
-        const auto& shape = parsed.value->collisionShapes[type];
-        Require(shape.sourceIndex == type && shape.sourceType == type && shape.nodeId == type + 1
-            && shape.vertices[0][2] == 3 && shape.rawWords[0] == 0x3f800000, "碰撞源顺序、节点和原始位");
-        Require(shape.support == (type == 0 || type == 2 ? MdxCollisionSupport::Supported : MdxCollisionSupport::LayoutAmbiguous)
-            && shape.payloadBytes == (type == 2 ? 16u : type == 3 ? 28u : 24u), "已证布局与歧义分开");
-    }
-    Require(parsed.value->collisionShapes[0].layout == MdxCollisionLayout::BoxVertices24
-        && parsed.value->collisionShapes[2].layout == MdxCollisionLayout::SphereCenterRadius16
-        && parsed.value->collisionShapes[2].radius == 7, "Box 与 Sphere 原字段");
-    auto nonfinite = w.bytes; const std::uint32_t rawNaN = 0x7fc01234;
-    std::memcpy(nonfinite.data() + chunk + 4 + 96 + 4, &rawNaN, 4);
-    const auto preserved = ParseMdx(nonfinite);
-    Require(preserved.Succeeded() && preserved.value->collisionShapes[0].support == MdxCollisionSupport::NonFinite
-        && preserved.value->collisionShapes[0].rawWords[0] == rawNaN, "非有限旧数据不丢弃或新增拒绝");
-    auto unknown = w.bytes; const std::uint32_t rawType = 4;
-    std::memcpy(unknown.data() + chunk + 4 + 96, &rawType, 4); Rejected(unknown, "MDX_COLLISION_TYPE_UNSUPPORTED");
-    w.bytes.pop_back(); Rejected(w.bytes, "MDX_TRUNCATED");
-}
-
 void TestModelFile() {
     Require(MdxModelFile("Doodads\\Terrain\\LordaeronTree\\LordaeronTree", 3, 10) == "Doodads\\Terrain\\LordaeronTree\\LordaeronTree3.mdx",
         "多变体追加编号");
@@ -680,7 +646,7 @@ int main(int argc, char** argv) {
         TestPosePreviewSemantics();
         TestParsedRigidSkinning();
         TestRigidSkinningPivotAndNormals();
-        TestCollisionMetadata();
+        MdxClassicNodeTests::Run();
         TestModelFile();
         TestRigidStaticPreview();
         for (int i = 1; i < argc; ++i) TestRigidStaticAsset(argv[i]);

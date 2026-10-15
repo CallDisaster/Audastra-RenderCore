@@ -8,6 +8,7 @@
 #include "MaterialChannels.h"
 #include "../Render/Assets/MdxNormalPreview.h"
 #include "../Render/Assets/MdxRigidStaticPreviewInternal.h"
+#include "../Render/Assets/MdxNoControllerStatic.h"
 
 #include <algorithm>
 #include <cmath>
@@ -47,11 +48,17 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
     Require(model.geosets.size() <= hard.maxGeosets, Code::SkinModelUnsupported);
     const auto nodeCount = MdxNodeCount(model);
     Require(rigidStaticPreview || nodeCount != 0, Code::PoseNodeUnavailable);
+    const bool noControllerStatic = !rigidStaticPreview && MdxNoControllerStaticInternal::Qualified(model);
     Budget budget{maxBytes};
     budget.Charge(1, sizeof(ModelData));
     if (rigidStaticPreview) {
         budget.Charge(model.rigidStaticPreviewSource->Bytes().size(), 1);
         budget.Charge(model.geosets.size(), sizeof(MdxRigidStaticGeosetOrigin));
+    }
+    if (noControllerStatic) {
+        budget.Charge(model.noControllerStaticSource->Nodes().size(), sizeof(MdxNoControllerNodeOrigin));
+        budget.Charge(model.noControllerStaticSource->PivotBits().size(), sizeof(std::array<std::uint32_t, 3>));
+        budget.Charge(1, sizeof(MdxNoControllerStaticSource));
     }
     budget.Charge(source.virtualPath.size() + source.sourceLayer.size() + source.contentDigest.size() + 3, 1);
     budget.Charge(nodeCount, sizeof(CompiledNode) + 7 * sizeof(std::uint32_t) + sizeof(const MdxNode*));
@@ -93,6 +100,7 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
     auto out = std::make_shared<ModelData>();
     out->identity = identity; out->source = std::move(source);
     if (rigidStaticPreview) out->rigidStaticPreviewSource = model.rigidStaticPreviewSource;
+    if (noControllerStatic) out->noControllerStaticSource = model.noControllerStaticSource;
     out->sequences.reserve(model.sequences.size());
     for (const auto& s : model.sequences) out->sequences.push_back({s.start, s.end, s.flags,
         s.end < s.start || s.flags > 1 ? Code::PoseSequenceUnsupported : Code::Ok});
@@ -117,8 +125,9 @@ std::shared_ptr<const ModelData> Compile(const MdxModel& model,
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         const auto& n = *nodes[i];
         Require(n.objectId < model.pivots.size(), Code::PosePivotUnavailable);
-        Require(Finite(model.pivots[n.objectId]), Code::PoseNumberInvalid);
-        Require((n.flags & ~(MdxNodeNonTransformFlags(n.kind) | 0xFFu)) == 0, Code::PoseNodeFlagsUnsupported);
+        Require(noControllerStatic || Finite(model.pivots[n.objectId]), Code::PoseNumberInvalid);
+        Require(noControllerStatic || (n.flags & ~(MdxNodeNonTransformFlags(n.kind) | 0xFFu)) == 0,
+            Code::PoseNodeFlagsUnsupported);
         Require(n.parentId >= -1, Code::PoseParentInvalid);
         if (n.parentId != -1) {
             parent[i] = findNode(static_cast<std::uint32_t>(n.parentId));
@@ -243,6 +252,7 @@ std::span<const GeosetColor> CompiledModel::GeosetColors() const noexcept {
 }
 bool CompiledModel::SharesStorageWith(const CompiledModel& other) const noexcept { return data_ == other.data_; }
 bool CompiledModel::IsRigidStaticPreview() const noexcept { return data_ && data_->rigidStaticPreviewSource != nullptr; }
+bool CompiledModel::UsesNoControllerStatic() const noexcept { return data_ && data_->noControllerStaticSource != nullptr; }
 
 War3Map::Result<CompiledModel> CompileMdxModel(const MdxModel& model, AssetIdentity identity,
     AssetSource source, std::uint64_t maxCompiledBytes) {
@@ -253,6 +263,11 @@ War3Map::Result<CompiledModel> CompileMdxModel(const MdxModel& model, AssetIdent
     };
     try {
         auto result = War3Map::Result<CompiledModel>::Success(ModelAccess::Make(Compile(model, identity, std::move(source), maxCompiledBytes, false)));
+        if (result.value->UsesNoControllerStatic() && MdxNoControllerStaticInternal::NeedsCompatibility(model)) {
+            auto warning = MdxNoControllerStaticInternal::Warning(model);
+            warning.origin->source = result.value->Source().virtualPath;
+            result.diagnostics.push_back(std::move(warning));
+        }
         for (std::size_t g = 0; g < model.geosets.size(); ++g) {
             const auto count = MdxZeroNormalCount(model.geosets[g].normals);
             if (count != 0) result.diagnostics.push_back(MdxZeroNormalWarning(g, count));

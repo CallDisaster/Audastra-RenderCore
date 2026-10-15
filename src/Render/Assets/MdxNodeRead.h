@@ -103,7 +103,9 @@ inline void ParsePivots(Reader reader, MdxModel& model, const MdxLimits& limits)
         Fail("MDX_LIMIT", "节点轴心数量超过上限。");
     for (std::size_t i = 0; i < count; ++i) {
         std::array<float, 3> pivot{};
-        for (auto& axis : pivot) axis = reader.F32("节点轴心");
+        // 先保留原字；只有整模型无控制器资格通过，最终读取才允许非有限PIVT。
+        // 其它F32（顶点、法线、轨迹、材质等）仍立即执行原有限值校验。
+        for (auto& axis : pivot) axis = std::bit_cast<float>(reader.U32("节点轴心"));
         model.pivots.push_back(pivot);
     }
 }
@@ -184,35 +186,36 @@ inline void ParseCollisions(Reader reader, MdxModel& model, const MdxLimits& lim
         shape.sourceIndex = static_cast<std::uint32_t>(model.collisionShapes.size());
         shape.sourceType = type;
         shape.nodeId = node.objectId;
-        shape.vertexCount = type == 2 ? 1u : 2u;
-        shape.hasRadius = type == 2 || type == 3;
-        shape.payloadBytes = shape.vertexCount * 12 + (shape.hasRadius ? 4u : 0u);
+        // 1.27a 的 CLID 读取按 type0/1/2/3 消费 24/20/16/8 字节；type1/3 不是两个顶点。
+        shape.vertexCount = type == 0 ? 2u : type == 3 ? 0u : 1u;
+        shape.hasRadius = type == 1 || type == 2;
         switch (type) {
-        case 0: shape.layout = MdxCollisionLayout::BoxVertices24; break;
-        case 1: shape.layout = MdxCollisionLayout::UnverifiedType1Vertices24; break;
-        case 2: shape.layout = MdxCollisionLayout::SphereCenterRadius16; break;
-        case 3: shape.layout = MdxCollisionLayout::UnverifiedType3VerticesRadius28; break;
+        case 0: shape.layout = MdxCollisionLayout::BoxVertices24; shape.payloadBytes = 24; break;
+        case 1: shape.layout = MdxCollisionLayout::Type1CenterHeightRadius20; shape.payloadBytes = 20; break;
+        case 2: shape.layout = MdxCollisionLayout::SphereCenterRadius16; shape.payloadBytes = 16; break;
+        case 3: shape.layout = MdxCollisionLayout::Type3Scalars8; shape.payloadBytes = 8; break;
         }
-        // 保持旧 Skip 的边界/接受范围；F32 会新增非有限值拒绝，因此读取原始位并单独标记。
-        reader.Need(shape.vertexCount * 12, "碰撞形状顶点");
+        // 碰撞负载保持原始浮点位；非有限值只禁用该碰撞，不连带丢弃模型。
+        reader.Need(shape.payloadBytes, "碰撞形状负载");
         bool finite = true;
-        for (std::uint32_t vertex = 0; vertex < shape.vertexCount; ++vertex) {
-            for (std::uint32_t axis = 0; axis < 3; ++axis) {
-                const auto raw = reader.U32("碰撞形状顶点");
-                shape.rawWords[vertex * 3 + axis] = raw;
-                shape.vertices[vertex][axis] = std::bit_cast<float>(raw);
-                finite = finite && std::isfinite(shape.vertices[vertex][axis]);
-            }
+        for (std::uint32_t word = 0; word < shape.payloadBytes / 4; ++word) {
+            shape.rawWords[word] = reader.U32("碰撞形状负载");
+            finite = finite && std::isfinite(std::bit_cast<float>(shape.rawWords[word]));
         }
-        if (shape.hasRadius) {
-            const auto raw = reader.U32("碰撞形状半径");
-            shape.rawWords[shape.vertexCount * 3] = raw;
-            shape.radius = std::bit_cast<float>(raw);
-            finite = finite && std::isfinite(shape.radius);
+        for (std::uint32_t vertex = 0; vertex < shape.vertexCount; ++vertex) {
+            for (std::uint32_t axis = 0; axis < 3; ++axis)
+                shape.vertices[vertex][axis] = std::bit_cast<float>(shape.rawWords[vertex * 3 + axis]);
+        }
+        if (shape.hasRadius) shape.radius = std::bit_cast<float>(shape.rawWords[type == 1 ? 4 : 3]);
+        if (type == 1) shape.height = std::bit_cast<float>(shape.rawWords[3]);
+        if (type == 3) {
+            for (std::size_t i = 0; i < shape.scalarParameters.size(); ++i)
+                shape.scalarParameters[i] = std::bit_cast<float>(shape.rawWords[i]);
         }
         if (!finite) shape.support = MdxCollisionSupport::NonFinite;
         else if (type == 2 && shape.radius < 0) shape.support = MdxCollisionSupport::InvalidRadius;
         else if (type == 0 || type == 2) shape.support = MdxCollisionSupport::Supported;
+        else shape.support = MdxCollisionSupport::GeometryUnsupported;
         model.collisionShapes.push_back(std::move(shape));
         model.otherNodes.push_back(std::move(node));
     }

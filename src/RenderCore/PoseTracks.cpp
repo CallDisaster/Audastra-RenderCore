@@ -142,6 +142,14 @@ bool EvaluateComputed(const ModelData& model, const PoseRequest& request, std::u
         const auto& source = model.nodes[i];
         NodePose node;
         node.objectId = source.layout.objectId; node.parentId = source.layout.parentId; node.pivot = source.pivot;
+        if (model.noControllerStaticSource) {
+            // 原版未保留整个模型的动画控制器：直接使用模型局部单位矩阵，不做PIVT加减。
+            // 原始pivot仍作为来源保留；禁止逐节点无轨迹时自行采用此分支。
+            node.localMatrix = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            node.worldMatrix = node.localMatrix;
+            nodes[i] = node;
+            continue;
+        }
         e.objectId = node.objectId;
         e.track = TrackKind::Translation;
         node.translation = SampleTrack(source.translation, node.translation, sequence, request.sequenceIndex, frame, request.globalElapsedMs, e);

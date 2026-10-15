@@ -33,7 +33,7 @@ struct MdxPoseRequest {
 struct MdxPoseNode {
     std::uint32_t objectId = 0;
     std::int32_t parentId = -1;
-    std::array<float, 3> pivot{};
+    std::array<float, 3> pivot{}; // 静态无控制器来源保留原位，可非有限；有效姿态由有限矩阵表示。
     std::array<float, 3> translation{};
     std::array<float, 4> rotation{0, 0, 0, 1};
     std::array<float, 3> scaling{1, 1, 1};

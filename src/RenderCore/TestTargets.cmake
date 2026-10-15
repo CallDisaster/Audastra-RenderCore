@@ -177,6 +177,14 @@ war3_render_core_options(war3-map-MdxModel-tests)
 add_test(NAME render-MdxModel COMMAND war3-map-MdxModel-tests)
 set_tests_properties(render-MdxModel PROPERTIES TIMEOUT 60)
 
+add_executable(war3-no-controller-static-tests
+    "${_render_core_repo}/tests/MdxNoControllerStaticTests.cpp"
+    "${_render_core_repo}/tests/RenderCoreAllocProbe.cpp")
+target_link_libraries(war3-no-controller-static-tests PRIVATE War3RenderCore::CPU)
+war3_render_core_options(war3-no-controller-static-tests)
+add_test(NAME render-no-controller-static COMMAND war3-no-controller-static-tests)
+set_tests_properties(render-no-controller-static PROPERTIES TIMEOUT 60)
+
 if(EXISTS "${_render_core_repo}/tests/ExternalFrameTests.cpp")
     add_executable(war3-render-external-frame-tests
         "${_render_core_repo}/tests/ExternalFrameTests.cpp" "${_render_core_repo}/tests/RenderCoreAllocProbe.cpp")
