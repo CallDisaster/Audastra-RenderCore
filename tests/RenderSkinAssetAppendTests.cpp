@@ -50,8 +50,13 @@ int main() try {
     fixture.layer.flags = 8; rejected();
     for (const auto flags : {WAR3_RENDER_MODEL_UNFOGGED, WAR3_RENDER_MODEL_LAYER_FLAGS}) {
         fixture.layer.flags = flags; ModelScene flagsCandidate; std::uint64_t flagsBytes = 0;
-        Check(CopySkinAssetAppend(append, colored.base, resident, flagsCandidate, flagsBytes)
-            && flagsCandidate.layers[0].flags == flags, "asset append retains Unfogged and combined flags");
+        Check(CopySkinAssetAppend(append, colored.base, resident, flagsCandidate, flagsBytes),
+            "asset append accepts Unfogged and combined flags");
+        // layers 使用全局序号：先保留 resident 前缀，再追加新层。
+        Check(flagsCandidate.layers.size() == append.prefix.layerCount + append.layerCount
+            && flagsCandidate.layers[0].flags == resident->layers[0].flags
+            && flagsCandidate.layers[append.prefix.layerCount].flags == flags,
+            "asset append retains resident prefix and appended Unfogged flags");
     }
     fixture.layer.flags = WAR3_RENDER_MODEL_UNSHADED;
     mesh.mesh.baseVertex = 0; rejected(); mesh.mesh.baseVertex = 4;
