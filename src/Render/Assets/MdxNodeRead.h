@@ -15,6 +15,7 @@ inline void CheckNodeBudget(const MdxModel& model, const MdxLimits& limits) {
 template <std::size_t Components>
 MdxNodeTrack<Components> ReadNodeTrack(Reader& reader, const MdxLimits& limits,
     std::size_t& totalKeys, const char* what) {
+    const auto sourceByteOffset = reader.Position() - 4;
     const auto count = reader.U32(what);
     const auto interpolation = reader.U32(what);
     const auto globalSequence = reader.U32(what);
@@ -28,6 +29,7 @@ MdxNodeTrack<Components> ReadNodeTrack(Reader& reader, const MdxLimits& limits,
     MdxNodeTrack<Components> track;
     track.interpolation = static_cast<MdxInterpolation>(interpolation);
     track.globalSequence = globalSequence;
+    track.sourceByteOffset = sourceByteOffset;
     track.keys.reserve(count);
     for (std::uint32_t k = 0; k < count; ++k) {
         MdxNodeKey<Components> key;
@@ -55,6 +57,8 @@ inline MdxNode ParseNode(Reader& reader, const MdxLimits& limits, std::size_t& t
     MdxNode node;
     node.name = payload.FixedString(80, "节点名称");
     node.objectId = payload.U32("节点对象 ID");
+    node.sourceObjectId = node.objectId;
+    node.sourceByteOffset = nodeStart;
     node.parentId = payload.I32("节点父 ID");
     node.flags = payload.U32("节点标志");
     while (payload.Remaining() != 0) {

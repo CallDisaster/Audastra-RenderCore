@@ -6,6 +6,7 @@
 #include "War3RenderCore/PoseBatch.h"
 #include "MdxTestModel.h"
 #include "MdxClassicNodeTests.h"
+#include "MdxCompatibilityTests.h"
 #include "RigidStaticPreviewFixture.h"
 
 #include <algorithm>
@@ -647,6 +648,7 @@ int main(int argc, char** argv) {
         TestParsedRigidSkinning();
         TestRigidSkinningPivotAndNormals();
         MdxClassicNodeTests::Run();
+        MdxCompatibilityTests::Run();
         TestModelFile();
         TestRigidStaticPreview();
         for (int i = 1; i < argc; ++i) TestRigidStaticAsset(argv[i]);

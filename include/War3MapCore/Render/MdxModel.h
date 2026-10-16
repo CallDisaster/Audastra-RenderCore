@@ -161,6 +161,7 @@ struct MdxNodeTrack {
     MdxInterpolation interpolation = MdxInterpolation::None;
     std::uint32_t globalSequence = UINT32_MAX; // GLBS 索引；UINT32_MAX 表示随普通动作时钟
     std::vector<MdxNodeKey<Components>> keys;
+    std::uint64_t sourceByteOffset = 0; // 原轨迹 tag；用于定位全局序列等引用错误
 };
 
 // 种类只描述公共节点所属块；纳入父链不表示已渲染粒子/条带/挂点/碰撞。
@@ -177,6 +178,9 @@ struct MdxNode {
     std::optional<MdxNodeTrack<4>> rotation;    // KGRT，四元数 x/y/z/w
     std::optional<MdxNodeTrack<3>> scaling;     // KGSC
     MdxNodeKind kind = MdxNodeKind::Helper;
+    // objectId 是求值身份；经典读取次序兼容可能重建 PREM 哨兵身份，原字段一直保留。
+    std::uint32_t sourceObjectId = UINT32_MAX;
+    std::uint64_t sourceByteOffset = 0; // 原 Node 的包含式大小字段
 };
 
 // 从变换标志校验中排除已知的类型/发射器绘制位，仍保留原始 flags；未知位不放行。

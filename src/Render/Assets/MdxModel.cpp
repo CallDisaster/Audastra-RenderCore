@@ -3,6 +3,7 @@
 
 #include "War3MapCore/Render/MdxModel.h"
 #include "MdxNodeRead.h"
+#include "MdxNodeIdentity.h"
 #include "MdxPremRead.h"
 #include "MdxRigidStaticPreviewInternal.h"
 #include "MdxNoControllerStatic.h"
@@ -219,14 +220,16 @@ void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits,
     }
 }
 
-void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::size_t& totalVertices,
-    std::size_t& totalIndices, std::vector<MdxRigidStaticGeosetOrigin>* rigidOrigins) {
-    while (reader.Remaining() != 0) {
-        const auto start = reader.Position();
-        const auto bytes = reader.U32("geoset 大小");
-        if (bytes < 4 || bytes > reader.Remaining() + 4) Fail("MDX_SIZE_INVALID", "geoset 大小无效。");
+void ParseGeosets(Reader outer, MdxModel& model, const MdxLimits& limits, std::size_t& totalVertices,
+    std::size_t& totalIndices, std::vector<MdxRigidStaticGeosetOrigin>* rigidOrigins,
+    std::vector<Diagnostic>& diagnostics) {
+    while (outer.Remaining() != 0) {
+        const auto start = outer.Position();
+        const auto bytes = outer.U32("geoset 大小");
+        if (bytes < 4 || bytes > outer.Remaining() + 4) Fail("MDX_SIZE_INVALID", "geoset 大小无效。");
         if (model.geosets.size() >= limits.maxGeosets) Fail("MDX_LIMIT", "geoset 数量超过上限。");
         const auto end = start + bytes;
+        auto reader = outer.Until(end, "GEOS 对象");
         MdxRigidStaticGeosetOrigin origin;
         origin.geosetBegin = start; origin.geosetEnd = end;
         MdxGeoset geoset;
@@ -241,7 +244,16 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
         reader.ExpectTag("NRMS", "法线");
         const auto normalCount = reader.Count(12, limits.maxVerticesPerGeoset, "法线");
         origin.normalsOffset = reader.Position();
-        if (normalCount != vertexCount) Fail("MDX_VALUE_INVALID", "法线数量与顶点数量不一致。");
+        if (normalCount != 0 && normalCount != vertexCount) Fail("MDX_VALUE_INVALID", "法线数量与顶点数量不一致：geoset="
+            + std::to_string(model.geosets.size()) + " VRTX=" + std::to_string(vertexCount)
+            + " NRMS=" + std::to_string(normalCount) + " offset=" + std::to_string(origin.normalsOffset - 4) + "。");
+        // 经典读取器独立读取 NRMS，零项合法。保留空数组；不合成原文件不存在的法线。
+        // 严格蒙皮仍检查完整法线；宿主静态预览须明确使用自己的安全预览法线。
+        if (normalCount == 0 && vertexCount != 0)
+            diagnostics.push_back({DiagnosticSeverity::Warning, kSubsystem, "MDX_NORMALS_ABSENT",
+                "geoset=" + std::to_string(model.geosets.size()) + " VRTX=" + std::to_string(vertexCount)
+                    + " NRMS=0：保留原空法线；严格蒙皮不可用，静态法线属于宿主预览近似。",
+                OriginSpan{{}, origin.normalsOffset - 4, 4, {}}});
         geoset.normals.resize(normalCount);
         for (auto& normal : geoset.normals)
             for (auto& axis : normal) axis = reader.F32("法线");
@@ -281,7 +293,9 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
         origin.matrixGroupsCountOffset = reader.Position();
         const auto matrixGroupCount = reader.Count(4, limits.maxMatrixGroupsPerGeoset, "矩阵组");
         if (!rigidOrigins && vertexCount != 0 && matrixGroupCount == 0)
-            Fail("MDX_VALUE_INVALID", "有顶点的 geoset 缺少矩阵组。");
+            Fail("MDX_VALUE_INVALID", "有顶点的 geoset 缺少矩阵组：geoset="
+                + std::to_string(model.geosets.size()) + " VRTX=" + std::to_string(vertexCount)
+                + " MTGC=0 offset=" + std::to_string(origin.matrixGroupsCountOffset) + "。");
         if (rigidOrigins && (vertexCount == 0 || matrixGroupCount != 0))
             Fail("MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED", "预览近似只接纳有顶点且原 MTGC count=0 的静态 geoset，offset="
                 + std::to_string(origin.matrixGroupsCountOffset) + " count=" + std::to_string(matrixGroupCount) + "。");
@@ -296,7 +310,10 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
         }
         for (const auto slot : geoset.vertexGroups) {
             if (!rigidOrigins && slot >= matrixGroupCount)
-                Fail("MDX_REFERENCE_INVALID", "GNDX 槽号超出 MTGC 组数。");
+                Fail("MDX_REFERENCE_INVALID", "GNDX 槽号超出 MTGC 组数：geoset="
+                    + std::to_string(model.geosets.size()) + " slot=" + std::to_string(slot)
+                    + " MTGC count=" + std::to_string(matrixGroupCount)
+                    + " GNDX offset=" + std::to_string(origin.vertexGroupsCountOffset) + "。");
             if (rigidOrigins && slot != 0)
                 Fail("MDX_REFERENCE_INVALID", "GNDX 槽号不符合静态矩阵组资格，offset="
                     + std::to_string(origin.vertexGroupsCountOffset) + " slot=" + std::to_string(slot) + "。");
@@ -337,6 +354,7 @@ void ParseGeosets(Reader reader, MdxModel& model, const MdxLimits& limits, std::
             Fail("MDX_RIGID_STATIC_PREVIEW_UNQUALIFIED", "预览近似不接纳未知 GEOS 尾部或未解释图元，geoset offset="
                 + std::to_string(start) + "。");
         reader.Skip(end - reader.Position(), "geoset 其余字段");
+        outer.Skip(bytes - 4, "GEOS 对象内容");
         model.geosets.push_back(std::move(geoset));
         if (rigidOrigins) rigidOrigins->push_back(origin);
     }
@@ -536,7 +554,7 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
                 ParseMaterials(chunk, model, limits, retainedMaterialAlphaKeys, retainedMaterialTextureBytes);
             } else if (tag == "GEOS") {
                 if (model.version != kClassicVersion) Fail("MDX_VERSION_UNSUPPORTED", "GEOS 之前缺少版本 800 的 VERS 块。");
-                ParseGeosets(chunk, model, limits, totalVertices, totalIndices, rigidOrigins);
+                ParseGeosets(chunk, model, limits, totalVertices, totalIndices, rigidOrigins, diagnostics);
             } else if (tag == "GEOA") {
                 auto parsed = ParseGeosetAnimations(chunk, limits);
                 if (parsed.size() > limits.maxGeosets - animations.size())
@@ -587,14 +605,17 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
         for (const auto& material : model.materials)
             for (const auto& layer : material.layers)
                 if (layer.textureId >= model.textures.size()) Fail("MDX_REFERENCE_INVALID", "材质层引用了不存在的贴图。");
-        const auto checkGlobalSequence = [&](const auto& track) {
-            return !track || track->globalSequence == kNoGlobalSequence
-                || track->globalSequence < model.globalSequences.size();
-        };
+        ResolvePremSentinelIds(model, diagnostics);
         const auto checkTracks = [&](const MdxNode& node) {
-            if (!checkGlobalSequence(node.translation) || !checkGlobalSequence(node.rotation)
-                || !checkGlobalSequence(node.scaling))
-                Fail("MDX_REFERENCE_INVALID", "节点轨迹引用了不存在的全局序列。");
+            const auto check = [&](const auto& track, const char* tag) {
+                if (track && track->globalSequence != kNoGlobalSequence
+                    && track->globalSequence >= model.globalSequences.size())
+                    Fail("MDX_REFERENCE_INVALID", "节点轨迹引用了不存在的全局序列：node=" + std::to_string(node.objectId)
+                        + " track=" + tag + " global=" + std::to_string(track->globalSequence)
+                        + " GLBS count=" + std::to_string(model.globalSequences.size())
+                        + " offset=" + std::to_string(track->sourceByteOffset + 12) + "。");
+            };
+            check(node.translation, "KGTR"); check(node.rotation, "KGRT"); check(node.scaling, "KGSC");
         };
         ForEachMdxNode(model, checkTracks);
         FinalizePremEmitters(model);
@@ -605,8 +626,14 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
         };
         std::map<std::uint32_t, const MdxNode*> nodes;
         const auto registerNode = [&](const MdxNode& node) {
-            if (node.objectId == UINT32_MAX || !nodes.emplace(node.objectId, &node).second)
-                Fail("MDX_REFERENCE_INVALID", "公共节点对象 ID 重复或为无效哨兵。");
+            if (node.objectId == UINT32_MAX)
+                Fail("MDX_REFERENCE_INVALID", "公共节点对象 ID 为无效哨兵：offset="
+                    + std::to_string(node.sourceByteOffset + 84) + "；不符合已验证的 PREM 读取次序资格。");
+            const auto [existing, inserted] = nodes.emplace(node.objectId, &node);
+            if (!inserted)
+                Fail("MDX_REFERENCE_INVALID", "公共节点对象 ID 重复：id=" + std::to_string(node.objectId)
+                    + " offset=" + std::to_string(node.sourceByteOffset + 84)
+                    + " first offset=" + std::to_string(existing->second->sourceByteOffset + 84) + "。");
             if (node.parentId < -1) Fail("MDX_REFERENCE_INVALID", "节点父 ID 不是有效对象或根哨兵。");
             if (node.objectId >= model.pivots.size()) incomplete("节点 objectId 没有对应 PIVT 轴心。");
         };
