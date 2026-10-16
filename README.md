@@ -46,6 +46,10 @@ Computed/ExternalGroups 是近似预览；新外部帧输入验证并复制宿�
 `python tools/dev/update-render-core-lock.py`，由该脚本重新生成提交/版本/全文件 SHA 锁。
 FORGE 配置及实际消费者构建都拒绝未提交的共享修改；不要在 FORGE 恢复第二份实现。
 
+粒子逐draw Unfogged 的可选ABI合同见 `docs/PARTICLE_MATERIAL_CONTRACT.md`。
+它保留旧draw/update/API表，通过已知 `getSkinStatus` 输出尾部发现能力；实际provider、
+事务和GPU像素消费由消费者另行验收，核心合同本身不表示已经支持粒子无雾绘制。
+
 0.1.13 增加显式 KMTA 同帧同位值兼容预览与 PREM typed 原始记录读取。
 默认材质求值仍严格拒绝重复帧；兼容模式只对完整非全局、非递减且重复值/适用切线
 逐位相同的轨迹生效，不改变源键序。成功警告通过独立有界视图提供材质层及原键偏移，

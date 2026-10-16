@@ -85,6 +85,14 @@ endif()
 add_test(NAME render-skin-input COMMAND war3-render-skin-input-tests)
 set_tests_properties(render-skin-input PROPERTIES TIMEOUT 60)
 
+# 粒子逐draw材质仅扩展已知描述符/getSkinStatus尾部，不移动旧ABI。
+add_executable(war3-particle-material-contract-tests
+    "${_render_core_repo}/tests/ParticleMaterialContractTests.cpp")
+target_link_libraries(war3-particle-material-contract-tests PRIVATE War3RenderCore::Contract)
+war3_render_core_options(war3-particle-material-contract-tests)
+add_test(NAME render-particle-material-contract COMMAND war3-particle-material-contract-tests)
+set_tests_properties(render-particle-material-contract PROPERTIES TIMEOUT 60)
+
 # 实例名单替换是显式事务，普通姿势更新仍保留固定名单门禁。
 add_executable(war3-render-skin-roster-tests
     "${_render_core_repo}/tests/RenderSkinRosterTests.cpp")
