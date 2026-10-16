@@ -47,6 +47,13 @@ int main() try {
             && candidate.initialSkin == baseline && unchanged == 991, "rejection retains output and payload");
     };
     ++append.prefix.vertexCount; rejected(); --append.prefix.vertexCount;
+    fixture.layer.flags = 8; rejected();
+    for (const auto flags : {WAR3_RENDER_MODEL_UNFOGGED, WAR3_RENDER_MODEL_LAYER_FLAGS}) {
+        fixture.layer.flags = flags; ModelScene flagsCandidate; std::uint64_t flagsBytes = 0;
+        Check(CopySkinAssetAppend(append, colored.base, resident, flagsCandidate, flagsBytes)
+            && flagsCandidate.layers[0].flags == flags, "asset append retains Unfogged and combined flags");
+    }
+    fixture.layer.flags = WAR3_RENDER_MODEL_UNSHADED;
     mesh.mesh.baseVertex = 0; rejected(); mesh.mesh.baseVertex = 4;
     fixture.groups[1].values[1] = std::numeric_limits<float>::quiet_NaN(); rejected(); fixture.groups[1].values[1] = 0;
     colors[1].rgb[0] = 1.1f; rejected(); colors[1].rgb[0] = 0;

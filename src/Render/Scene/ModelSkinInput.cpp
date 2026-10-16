@@ -67,7 +67,7 @@ bool ValidateModelGeometry(const ModelScene& scene, std::uint32_t textureCount) 
     }
     for (const auto& layer : scene.layers) {
         if ((layer.textureIndex != WAR3_RENDER_MODEL_NO_TEXTURE && layer.textureIndex >= textureCount)
-            || layer.filterMode > 6 || layer.flags > 7 || !Unit(layer.alpha)) return false;
+            || layer.filterMode > 6 || (layer.flags & ~WAR3_RENDER_MODEL_LAYER_FLAGS) != 0 || !Unit(layer.alpha)) return false;
     }
     for (const auto& mesh : scene.meshes) {
         if (mesh.indexCount == 0 || mesh.indexCount % 3 != 0 || mesh.firstIndex > scene.indices.size()
@@ -391,7 +391,7 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
     for (std::uint32_t i = 0; i < assets.layerCount; ++i) {
         const auto& layer = assets.layers[i];
         if ((layer.textureIndex != WAR3_RENDER_MODEL_NO_TEXTURE && layer.textureIndex >= textures)
-            || layer.filterMode > 6 || layer.flags > 7 || !Unit(layer.alpha)) return false;
+            || layer.filterMode > 6 || (layer.flags & ~WAR3_RENDER_MODEL_LAYER_FLAGS) != 0 || !Unit(layer.alpha)) return false;
         candidate.layers.push_back(layer);
     }
     std::uint64_t indexEnd = assets.prefix.indexCount, drawnLayers = 0;

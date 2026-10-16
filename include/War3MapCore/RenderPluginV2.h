@@ -129,7 +129,12 @@ struct War3RenderTerrainMipSceneV2 {
 struct War3RenderModelVertexV2 { float x, y, z, nx, ny, nz, u, v; };
 constexpr std::uint32_t WAR3_RENDER_MODEL_NO_TEXTURE = UINT32_MAX;
 // filterMode 同 MDX：0 不透明、1 透明测试(alpha≥0.75)、2 混合、3 叠加、4 叠加 alpha、5 调制、6 双倍调制。
-// flags：1 无光照、4 不写深度。模型均按双面绘制。
+// flags：1 无光照、2 不受雾影响、4 不写深度；可组合，未知位拒绝。模型均按双面绘制。
+constexpr std::uint32_t WAR3_RENDER_MODEL_UNSHADED = 1;
+constexpr std::uint32_t WAR3_RENDER_MODEL_UNFOGGED = 2;
+constexpr std::uint32_t WAR3_RENDER_MODEL_NO_DEPTH_WRITE = 4;
+constexpr std::uint32_t WAR3_RENDER_MODEL_LAYER_FLAGS = WAR3_RENDER_MODEL_UNSHADED
+    | WAR3_RENDER_MODEL_UNFOGGED | WAR3_RENDER_MODEL_NO_DEPTH_WRITE;
 struct War3RenderModelLayerV2 { std::uint32_t textureIndex, filterMode, flags; float alpha; };
 // indices 为 16 位；baseVertex 为该网格首顶点在 vertices 中的位置。
 struct War3RenderModelMeshV2 { std::uint32_t firstIndex, indexCount, baseVertex, firstLayer, layerCount; };
