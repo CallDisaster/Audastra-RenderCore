@@ -35,7 +35,8 @@ int main() {
         ModelScene rebound;
         Check(CopySkinRoster(twenty, resident, rebound), "one to twenty roster");
         Check(rebound.initialSkin->instances.size() == 20 && rebound.instances.size() == 20
-            && rebound.models.size() == resident.models.size() && rebound.meshGroups == resident.meshGroups,
+            && rebound.models.size() == resident.models.size() && rebound.meshGroups == resident.meshGroups
+            && !rebound.explicitStaticSamplers && rebound.staticSamplerFlags.empty() && rebound.staticSamplerBackendBudget == 0,
             "new baseline and fixed layout");
         Check(rebound.vertices.empty() && rebound.indices.empty() && rebound.textures.empty()
             && resident.vertices.data() == vertices && resident.indices.data() == indices
@@ -67,7 +68,8 @@ int main() {
         static_assert(offsetof(War3RenderPluginApiV2, getFrameMetrics) == 8 + 34 * sizeof(void(*)()));
         static_assert(offsetof(War3RenderPluginApiV2, submitEditorInstanceRoster) == 8 + 35 * sizeof(void(*)()));
         static_assert(offsetof(War3RenderPluginApiV2, getModelLayerCapabilities) == 8 + 39 * sizeof(void(*)()));
-        static_assert(sizeof(War3RenderPluginApiV2) == 8 + 40 * sizeof(void(*)()));
+        static_assert(offsetof(War3RenderPluginApiV2, getStaticModelSamplerCapabilities) == 8 + 40 * sizeof(void(*)()));
+        static_assert(sizeof(War3RenderPluginApiV2) == 8 + 41 * sizeof(void(*)()));
         std::cout << "resident-roster one->twenty->zero, strict baseline and rollback passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

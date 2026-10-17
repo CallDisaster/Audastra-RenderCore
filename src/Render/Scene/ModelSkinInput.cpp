@@ -60,7 +60,54 @@ bool BindModelLayerCounts(ModelScene& scene, bool enabled) {
     return true;
 }
 }
+bool ValidateStaticSamplerScene(const War3RenderModelSceneV2& input,
+    std::uint64_t textureDescriptorBytes, std::uint64_t texturePixelBytes, StaticSamplerSceneView& output) {
+    if ((input.structSize != sizeof(input) && input.structSize != sizeof(War3RenderStaticSamplerModelSceneV2))
+        || input.vertexCount > 2097152 || input.indexCount > 6291456 || input.layerCount > 131072
+        || input.meshCount > 65536 || input.modelCount > 16384 || input.textureCount > 4096
+        || (input.vertexCount && !input.vertices) || (input.indexCount && !input.indices)
+        || (input.layerCount && !input.layers) || (input.meshCount && !input.meshes)
+        || (input.modelCount && !input.models) || (input.instanceCount && !input.instances)
+        || (input.textureCount && !input.textures)) return false;
+    StaticSamplerSceneView candidate;
+    if (input.structSize == sizeof(War3RenderStaticSamplerModelSceneV2)) {
+        const auto& extended = *reinterpret_cast<const War3RenderStaticSamplerModelSceneV2*>(&input);
+        if (extended.samplerFormat != WAR3_RENDER_STATIC_LAYER_SAMPLERS_V1
+            || extended.samplerFlagCount != input.layerCount
+            || (extended.samplerFlagCount ? extended.samplerFlags == nullptr : extended.samplerFlags != nullptr)) return false;
+        candidate.explicitSamplers = true;
+        candidate.samplerFlags = {extended.samplerFlags, extended.samplerFlagCount};
+    }
+    // 原legacy公式保持；新数组两份声明大小及descriptor增量在任何复制前计费。
+    constexpr std::uint64_t maximum = 320ull * 1024 * 1024;
+    std::uint64_t bytes = 0;
+    const auto add = [&](std::uint64_t amount) {
+        if (amount > maximum - bytes) return false;
+        bytes += amount;
+        return true;
+    };
+    if (!add(std::uint64_t(input.vertexCount) * sizeof(War3RenderModelVertexV2))
+        || !add(std::uint64_t(input.indexCount) * sizeof(std::uint16_t))
+        || !add(std::uint64_t(input.layerCount) * sizeof(War3RenderModelLayerV2))
+        || !add(std::uint64_t(input.meshCount) * sizeof(War3RenderModelMeshV2))
+        || !add(std::uint64_t(input.modelCount) * sizeof(War3RenderModelV2))
+        || !add(std::uint64_t(input.instanceCount) * sizeof(War3RenderModelInstanceV2))
+        || !add(2 * candidate.samplerFlags.size_bytes())
+        || (candidate.explicitSamplers && !add(sizeof(War3RenderStaticSamplerModelSceneV2) - sizeof(input)))
+        || !add(textureDescriptorBytes) || !add(texturePixelBytes)) return false;
+    for (const auto flags : candidate.samplerFlags)
+        if (flags & ~WAR3_RENDER_STATIC_SAMPLER_FLAGS_MASK) return false;
+    candidate.payloadBytes = bytes;
+    output = candidate;
+    return true;
+}
 bool ValidateModelGeometry(const ModelScene& scene, std::uint32_t textureCount) {
+    if (scene.explicitStaticSamplers) {
+        if (scene.staticSamplerFlags.size() != scene.layers.size() || scene.initialSkin
+            || scene.dynamicColors || scene.dynamicMaterialAlphas || scene.dynamicMaterialStates) return false;
+        for (const auto flags : scene.staticSamplerFlags)
+            if (flags & ~WAR3_RENDER_STATIC_SAMPLER_FLAGS_MASK) return false;
+    } else if (!scene.staticSamplerFlags.empty() || scene.staticSamplerBackendBudget) return false;
     for (const auto& vertex : scene.vertices) {
         const float values[]{vertex.x, vertex.y, vertex.z, vertex.nx, vertex.ny, vertex.nz, vertex.u, vertex.v};
         for (const auto value : values) if (!Coordinate(value)) return false;
@@ -87,9 +134,33 @@ bool ValidateModelGeometry(const ModelScene& scene, std::uint32_t textureCount) 
     }
     return true;
 }
+bool CopyStaticModelInput(const War3RenderModelSceneV2& input,
+    std::uint64_t textureDescriptorBytes, std::uint64_t texturePixelBytes,
+    ModelScene& output, std::uint64_t& payloadBytes) {
+    StaticSamplerSceneView view;
+    if (!ValidateStaticSamplerScene(input, textureDescriptorBytes, texturePixelBytes, view)) return false;
+    ModelScene candidate;
+    Copy(candidate.vertices, input.vertices, input.vertexCount);
+    Copy(candidate.indices, input.indices, input.indexCount); Copy(candidate.layers, input.layers, input.layerCount);
+    Copy(candidate.meshes, input.meshes, input.meshCount); Copy(candidate.models, input.models, input.modelCount);
+    Copy(candidate.instances, input.instances, input.instanceCount);
+    candidate.explicitStaticSamplers = view.explicitSamplers;
+    if (!view.samplerFlags.empty()) candidate.staticSamplerFlags.assign(view.samplerFlags.begin(), view.samplerFlags.end());
+    // preflight含两份声明大小；先补provider实际capacity，仍保留backend最小份额。
+    const auto extraSamplerBytes = candidate.StaticSamplerBytes() - view.samplerFlags.size_bytes();
+    constexpr std::uint64_t maximum = 320ull * 1024 * 1024;
+    if (extraSamplerBytes > maximum - view.payloadBytes) return false;
+    const auto actualPayloadBytes = view.payloadBytes + extraSamplerBytes - view.samplerFlags.size_bytes();
+    if (view.explicitSamplers) candidate.staticSamplerBackendBudget = maximum - actualPayloadBytes;
+    if (!ValidateModelGeometry(candidate, input.textureCount)) return false;
+    output = std::move(candidate);
+    payloadBytes = actualPayloadBytes;
+    return true;
+}
 bool CopySkinUpdate(const War3RenderSkinUpdateV2& input, const ModelScene& scene, SkinPose& pose) {
     const bool shared = input.matrixFormat == WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4_SHARED_RANGES;
-    if (input.structSize < sizeof(input) || !input.sceneVersion || !input.contentVersion || input.reserved
+    if (scene.explicitStaticSamplers || !scene.staticSamplerFlags.empty() || scene.staticSamplerBackendBudget
+        || input.structSize < sizeof(input) || !input.sceneVersion || !input.contentVersion || input.reserved
         || input.groupCount > 1048576 || input.alphaCount > 1048576
         || (!shared && input.matrixFormat != WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4)
         || input.matrixStrideBytes != sizeof(War3RenderGroupMatrixV2) || input.worldTransformApplied
@@ -218,7 +289,8 @@ bool CopySkinUpdate(const War3RenderSkinUpdateV2& input, const ModelScene& scene
     return true;
 }
 bool CopySkinnedModelInput(const War3RenderSkinnedModelSceneV2& input, ModelScene& scene, std::uint64_t& payloadBytes) {
-    if (input.structSize < sizeof(input) || !input.initialPose || input.vertexCount > 2097152 || input.indexCount > 6291456
+    if (scene.explicitStaticSamplers || !scene.staticSamplerFlags.empty() || scene.staticSamplerBackendBudget
+        || input.structSize < sizeof(input) || !input.initialPose || input.vertexCount > 2097152 || input.indexCount > 6291456
         || input.layerCount > 131072 || input.meshCount > 65536 || input.modelCount > 16384 || input.textureCount > 4096
         || (input.vertexCount && !input.vertices) || (input.indexCount && !input.indices)
         || (input.layerCount && !input.layers) || (input.meshCount && !input.meshes) || (input.modelCount && !input.models)) return false;
@@ -299,7 +371,8 @@ bool CopySkinRoster(const War3RenderSkinUpdateV2& input, const ModelScene& resid
     const War3RenderMaterialSkinUpdateV2* material = nullptr;
     const War3RenderMaterialStateSkinUpdateV2* state = nullptr;
     if (!SkinModes(input, colored, material, state)) return false;
-    if (!residentStatic.initialSkin || !input.sceneVersion || !input.contentVersion
+    if (residentStatic.explicitStaticSamplers || !residentStatic.staticSamplerFlags.empty() || residentStatic.staticSamplerBackendBudget
+        || !residentStatic.initialSkin || !input.sceneVersion || !input.contentVersion
         || input.sceneVersion <= residentStatic.initialSkin->sceneVersion
         || input.matrixFormat != residentStatic.initialSkin->matrixFormat
         || bool(colored) != (residentStatic.dynamicColors || !residentStatic.initialSkin->colors.empty())
@@ -328,7 +401,9 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
     const War3RenderMaterialSkinUpdateV2* material = nullptr;
     const War3RenderMaterialStateSkinUpdateV2* state = nullptr;
     if (!SkinModes(input, colored, material, state)) return false;
-    if (!residentStatic || !residentStatic->initialSkin || assets.structSize != sizeof(assets) || assets.reserved
+    if (!residentStatic || residentStatic->explicitStaticSamplers || !residentStatic->staticSamplerFlags.empty()
+        || residentStatic->staticSamplerBackendBudget
+        || !residentStatic->initialSkin || assets.structSize != sizeof(assets) || assets.reserved
         || assets.prefix.vertexCount != residentStatic->VertexCount()
         || assets.prefix.indexCount != residentStatic->IndexCount()
         || assets.prefix.layerCount != residentStatic->layers.size()

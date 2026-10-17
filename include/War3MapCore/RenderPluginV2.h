@@ -375,6 +375,10 @@ struct War3RenderPluginApiV2 {
         std::uint64_t ticket, War3RenderInstanceRosterResultV2*);
     // 可选只读尾部；先核offsetof+sizeof指针及非空。缺能力不能发送新模型层角色。
     std::int32_t (WAR3_RENDER_CALL* getModelLayerCapabilities)(War3RendererHandle, std::uint32_t* flags);
+    // 静态draw层sampler可选能力；先核表容量及非空，再检查明确的格式/flags。
+    // 合同见RenderPluginStaticSamplers.h。不能按API大小或skin能力推断支持。
+    std::int32_t (WAR3_RENDER_CALL* getStaticModelSamplerCapabilities)(War3RendererHandle,
+        struct War3RenderStaticSamplerCapabilitiesV2*);
 };
 using War3GetRenderPluginApiV2 = const War3RenderPluginApiV2* (WAR3_RENDER_CALL*)(std::uint32_t);
 WAR3_RENDER_EXPORT const War3RenderPluginApiV2* WAR3_RENDER_CALL

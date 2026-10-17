@@ -93,6 +93,21 @@ war3_render_core_options(war3-particle-material-contract-tests)
 add_test(NAME render-particle-material-contract COMMAND war3-particle-material-contract-tests)
 set_tests_properties(render-particle-material-contract PROPERTIES TIMEOUT 60)
 
+# 静态sampler只增加scene/API尾部；冻结旧40函数、scene/layer布局与能力协商合同。
+add_executable(war3-static-sampler-contract-tests
+    "${_render_core_repo}/tests/StaticSamplerContractTests.cpp")
+target_link_libraries(war3-static-sampler-contract-tests PRIVATE War3RenderCore::Contract)
+war3_render_core_options(war3-static-sampler-contract-tests)
+add_test(NAME render-static-sampler-contract COMMAND war3-static-sampler-contract-tests)
+set_tests_properties(render-static-sampler-contract PROPERTIES TIMEOUT 60)
+
+add_executable(war3-static-sampler-input-tests
+    "${_render_core_repo}/tests/StaticSamplerInputTests.cpp")
+target_link_libraries(war3-static-sampler-input-tests PRIVATE War3RenderCore::SkinInput)
+war3_render_core_options(war3-static-sampler-input-tests)
+add_test(NAME render-static-sampler-input COMMAND war3-static-sampler-input-tests)
+set_tests_properties(render-static-sampler-input PROPERTIES TIMEOUT 60)
+
 # 实例名单替换是显式事务，普通姿势更新仍保留固定名单门禁。
 add_executable(war3-render-skin-roster-tests
     "${_render_core_repo}/tests/RenderSkinRosterTests.cpp")

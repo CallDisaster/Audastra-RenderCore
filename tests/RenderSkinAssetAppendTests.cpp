@@ -13,7 +13,9 @@ int main() try {
     RenderSkinFixture fixture;
     auto first = fixture.Update(); first.instanceCount = first.groupCount = first.alphaCount = 1;
     auto resident = std::make_shared<ModelScene>(); std::uint64_t bytes = 0;
-    Check(CopySkinnedModelInput(fixture.Scene(first), *resident, bytes), "resident fixture");
+    Check(CopySkinnedModelInput(fixture.Scene(first), *resident, bytes)
+        && !resident->explicitStaticSamplers && resident->staticSamplerFlags.empty()
+        && resident->staticSamplerBackendBudget == 0, "resident legacy sampler fixture");
     const auto* oldVertices = resident->vertices.data(); const auto oldBaseline = resident->initialSkin;
     auto mesh = fixture.mesh; mesh.mesh.baseVertex = 4; mesh.mesh.firstIndex = 6; mesh.mesh.firstLayer = 1;
     auto model = fixture.model; model.model.firstMesh = 1;
@@ -29,7 +31,9 @@ int main() try {
     append.vertices = fixture.vertices.data(); append.indices = fixture.indices.data(); append.layers = &fixture.layer;
     append.meshes = &mesh; append.models = &model; append.colors = &staticColor;
     ModelScene candidate;
-    Check(CopySkinAssetAppend(append, colored.base, resident, candidate, bytes), "append B with explicit RGB promotion");
+    Check(CopySkinAssetAppend(append, colored.base, resident, candidate, bytes)
+        && !candidate.explicitStaticSamplers && candidate.staticSamplerFlags.empty()
+        && candidate.staticSamplerBackendBudget == 0, "append B keeps legacy static samplers");
     Check(candidate.staticBase == resident && candidate.vertices.size() == 4 && candidate.indices.size() == 6
         && candidate.VertexCount() == 8 && candidate.IndexCount() == 12 && candidate.models.size() == 2
         && candidate.dynamicColors && candidate.meshColors[1].rgb[1] == 1
