@@ -109,6 +109,13 @@ war3_render_core_options(war3-terrain-blight-contract-tests)
 add_test(NAME render-terrain-blight-contract COMMAND war3-terrain-blight-contract-tests)
 set_tests_properties(render-terrain-blight-contract PROPERTIES TIMEOUT 60)
 
+add_executable(war3-terrain-grid-contract-tests
+    "${_render_core_repo}/tests/TerrainGridContractTests.cpp")
+target_link_libraries(war3-terrain-grid-contract-tests PRIVATE War3RenderCore::Contract)
+war3_render_core_options(war3-terrain-grid-contract-tests)
+add_test(NAME render-terrain-grid-contract COMMAND war3-terrain-grid-contract-tests)
+set_tests_properties(render-terrain-grid-contract PROPERTIES TIMEOUT 60)
+
 add_executable(war3-static-sampler-input-tests
     "${_render_core_repo}/tests/StaticSamplerInputTests.cpp")
 target_link_libraries(war3-static-sampler-input-tests PRIVATE War3RenderCore::SkinInput)

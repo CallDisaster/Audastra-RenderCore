@@ -288,6 +288,9 @@ struct War3RenderEditorInstanceRosterV2;
 struct War3RenderInstanceRosterResultV2;
 struct War3RenderTerrainBlightCapabilitiesV2;
 struct War3RenderTerrainBlightFrameV2;
+struct War3RenderTerrainGridCapabilitiesV2;
+struct War3RenderTerrainGridFrameV2;
+struct War3RenderTerrainGridCaptureFactsV2;
 struct War3RenderPluginApiV2 {
     std::uint32_t structSize;
     std::uint32_t apiVersion;
@@ -388,6 +391,14 @@ struct War3RenderPluginApiV2 {
     // 返回0仅表示同步深拷贝/CPU接收；完整同帧提交，完成仍以getViewInfo/capture为准。
     std::int32_t (WAR3_RENDER_CALL* submitTerrainBlightFrame)(War3RendererHandle,
         const War3RenderTerrainBlightFrameV2*);
+    // shared-grid可选尾部：先核三slot容量/非空和明确Caps，不改变旧43函数前缀。
+    // 具体有界借用、空池、预算及捕获事实合同见RenderPluginTerrainGrid.h。
+    std::int32_t (WAR3_RENDER_CALL* getTerrainGridCapabilities)(War3RendererHandle,
+        War3RenderTerrainGridCapabilitiesV2*);
+    std::int32_t (WAR3_RENDER_CALL* submitTerrainGridFrame)(War3RendererHandle,
+        const War3RenderTerrainGridFrameV2*);
+    std::int32_t (WAR3_RENDER_CALL* getTerrainGridCaptureFacts)(War3RendererHandle,
+        const War3RenderViewInfoV2* expected, War3RenderTerrainGridCaptureFactsV2*);
 };
 using War3GetRenderPluginApiV2 = const War3RenderPluginApiV2* (WAR3_RENDER_CALL*)(std::uint32_t);
 WAR3_RENDER_EXPORT const War3RenderPluginApiV2* WAR3_RENDER_CALL

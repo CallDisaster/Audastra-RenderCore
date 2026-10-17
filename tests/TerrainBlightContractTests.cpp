@@ -23,6 +23,10 @@ struct FrozenApi41 {
     std::uint32_t structSize, apiVersion;
     void (*functions[41])();
 };
+struct FrozenApi43 {
+    std::uint32_t structSize, apiVersion;
+    void (*functions[43])();
+};
 static_assert(sizeof(FrozenVertex) == 32 && sizeof(FrozenVertex) == sizeof(War3RenderTerrainVertexV2));
 static_assert(sizeof(FrozenBatch) == 12 && sizeof(FrozenBatch) == sizeof(War3RenderTerrainBatchV2));
 static_assert(sizeof(FrozenMipScene) == sizeof(War3RenderTerrainMipSceneV2));
@@ -42,7 +46,11 @@ CHECK_SCENE_OFFSET(batches);
 static_assert(offsetof(War3RenderPluginApiV2, getStaticModelSamplerCapabilities) == 8 + 40 * sizeof(void(*)()));
 static_assert(offsetof(War3RenderPluginApiV2, getTerrainBlightCapabilities) == sizeof(FrozenApi41));
 static_assert(offsetof(War3RenderPluginApiV2, submitTerrainBlightFrame) == 8 + 42 * sizeof(void(*)()));
-static_assert(sizeof(War3RenderPluginApiV2) == 8 + 43 * sizeof(void(*)()));
+static_assert(sizeof(FrozenApi43) == 8 + 43 * sizeof(void(*)()));
+static_assert(offsetof(War3RenderPluginApiV2, submitTerrainBlightFrame)
+    + sizeof(War3RenderPluginApiV2::submitTerrainBlightFrame) == sizeof(FrozenApi43));
+static_assert(offsetof(War3RenderPluginApiV2, getTerrainGridCapabilities) == sizeof(FrozenApi43));
+static_assert(sizeof(War3RenderPluginApiV2) >= sizeof(FrozenApi43));
 static_assert(WAR3_RENDER_TERRAIN_BLIGHT_SHARED_BASE_V1 == 1);
 static_assert(WAR3_RENDER_TERRAIN_BLIGHT_MAX_BATCHES == 32);
 static_assert(sizeof(War3RenderTerrainBlightBatchV2) == 24);
@@ -181,7 +189,7 @@ int main() {
     try {
         CheckFrozenTerrainBytes();
         CheckCapabilityBoundary();
-        std::cout << "terrain-blight ABI: frozen 41-function prefix, 43-function table, terrain bytes and capability fixtures passed; no provider/GPU proof\n";
+        std::cout << "terrain-blight ABI: frozen 41/43-function prefixes, terrain bytes and capability fixtures passed; no provider/GPU proof\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
