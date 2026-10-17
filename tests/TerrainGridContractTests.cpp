@@ -59,6 +59,10 @@ struct FrozenApi43 {
     std::int32_t (WAR3_RENDER_CALL* getTerrainBlightCapabilities)(War3RendererHandle, War3RenderTerrainBlightCapabilitiesV2*);
     std::int32_t (WAR3_RENDER_CALL* submitTerrainBlightFrame)(War3RendererHandle, const War3RenderTerrainBlightFrameV2*);
 };
+static_assert(offsetof(War3RenderPluginApiV2, structSize) == 0 && offsetof(FrozenApi43, structSize) == 0);
+static_assert(offsetof(War3RenderPluginApiV2, apiVersion) == 4 && offsetof(FrozenApi43, apiVersion) == 4);
+static_assert(std::is_same_v<decltype(War3RenderPluginApiV2::structSize), std::uint32_t>);
+static_assert(std::is_same_v<decltype(War3RenderPluginApiV2::apiVersion), std::uint32_t>);
 #define FROZEN_SLOT(member, index) \
     static_assert(offsetof(FrozenApi43, member) == 8 + index * sizeof(void(*)())); \
     static_assert(offsetof(War3RenderPluginApiV2, member) == offsetof(FrozenApi43, member)); \
@@ -106,7 +110,9 @@ AT(War3RenderTerrainGridWaterVertexV2, waterZ, 0); AT(War3RenderTerrainGridWater
 AT(War3RenderTerrainGridWaterVertexV2, green, 8); AT(War3RenderTerrainGridWaterVertexV2, blue, 12);
 AT(War3RenderTerrainGridBaseQuadV2, sourceTile, 0);
 AT(War3RenderTerrainGridWaterQuadV2, sourceTile, 0); AT(War3RenderTerrainGridWaterQuadV2, alphaLevel, 4);
-#define FRAME(member, index) AT(War3RenderTerrainGridFrameV2, member, index * 4)
+#define FRAME(member, index) \
+    AT(War3RenderTerrainGridFrameV2, member, index * 4); \
+    static_assert(std::is_same_v<decltype(War3RenderTerrainGridFrameV2::member), std::uint32_t>)
 FRAME(structSize, 0); FRAME(gridFormat, 1); FRAME(width, 2); FRAME(height, 3); FRAME(gridVertexCount, 4);
 FRAME(baseQuadCount, 5); FRAME(baseIndexCount, 6); FRAME(baseBatchCount, 7); FRAME(blightIndexCount, 8);
 FRAME(blightBatchCount, 9); FRAME(waterQuadCount, 10); FRAME(waterIndexCount, 11);
