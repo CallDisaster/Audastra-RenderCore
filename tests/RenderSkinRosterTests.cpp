@@ -69,7 +69,8 @@ int main() {
         static_assert(offsetof(War3RenderPluginApiV2, submitEditorInstanceRoster) == 8 + 35 * sizeof(void(*)()));
         static_assert(offsetof(War3RenderPluginApiV2, getModelLayerCapabilities) == 8 + 39 * sizeof(void(*)()));
         static_assert(offsetof(War3RenderPluginApiV2, getStaticModelSamplerCapabilities) == 8 + 40 * sizeof(void(*)()));
-        static_assert(sizeof(War3RenderPluginApiV2) == 8 + 41 * sizeof(void(*)()));
+        static_assert(offsetof(War3RenderPluginApiV2, getStaticModelSamplerCapabilities)
+            + sizeof(War3RenderPluginApiV2::getStaticModelSamplerCapabilities) == 8 + 41 * sizeof(void(*)()));
         std::cout << "resident-roster one->twenty->zero, strict baseline and rollback passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

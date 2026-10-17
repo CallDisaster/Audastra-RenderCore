@@ -286,6 +286,8 @@ struct War3RenderFrameMetricsV2;
 struct War3RenderFrameMetricsPageV2;
 struct War3RenderEditorInstanceRosterV2;
 struct War3RenderInstanceRosterResultV2;
+struct War3RenderTerrainBlightCapabilitiesV2;
+struct War3RenderTerrainBlightFrameV2;
 struct War3RenderPluginApiV2 {
     std::uint32_t structSize;
     std::uint32_t apiVersion;
@@ -379,6 +381,13 @@ struct War3RenderPluginApiV2 {
     // 合同见RenderPluginStaticSamplers.h。不能按API大小或skin能力推断支持。
     std::int32_t (WAR3_RENDER_CALL* getStaticModelSamplerCapabilities)(War3RendererHandle,
         struct War3RenderStaticSamplerCapabilitiesV2*);
+    // 独立荒芜pass的可选尾部。两个入口分别核offsetof+sizeof指针及非空，
+    // 再查询实际renderer能力；合同见RenderPluginTerrainBlight.h，不改变旧16纹理入口。
+    std::int32_t (WAR3_RENDER_CALL* getTerrainBlightCapabilities)(War3RendererHandle,
+        War3RenderTerrainBlightCapabilitiesV2*);
+    // 返回0仅表示同步深拷贝/CPU接收；完整同帧提交，完成仍以getViewInfo/capture为准。
+    std::int32_t (WAR3_RENDER_CALL* submitTerrainBlightFrame)(War3RendererHandle,
+        const War3RenderTerrainBlightFrameV2*);
 };
 using War3GetRenderPluginApiV2 = const War3RenderPluginApiV2* (WAR3_RENDER_CALL*)(std::uint32_t);
 WAR3_RENDER_EXPORT const War3RenderPluginApiV2* WAR3_RENDER_CALL

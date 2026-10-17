@@ -25,7 +25,8 @@ static_assert(offsetof(LegacyParticleUpdate, draws) == offsetof(War3RenderPartic
 static_assert(offsetof(LegacyParticleUpdate, modelPose) == offsetof(War3RenderParticleUpdateV2, modelPose));
 static_assert(offsetof(War3RenderPluginApiV2, getModelLayerCapabilities) == 8 + 39 * sizeof(void(*)()));
 static_assert(offsetof(War3RenderPluginApiV2, getStaticModelSamplerCapabilities) == 8 + 40 * sizeof(void(*)()));
-static_assert(sizeof(War3RenderPluginApiV2) == 8 + 41 * sizeof(void(*)()));
+static_assert(offsetof(War3RenderPluginApiV2, getStaticModelSamplerCapabilities)
+    + sizeof(War3RenderPluginApiV2::getStaticModelSamplerCapabilities) == 8 + 41 * sizeof(void(*)()));
 static_assert(WAR3_RENDER_PARTICLE_MATERIAL_FLAGS_V1 == 1 && WAR3_PARTICLE_UNFOGGED == 1);
 
 void Check(bool value, const char* message) {

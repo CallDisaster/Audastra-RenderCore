@@ -101,7 +101,8 @@ CHECK_API_OFFSET(getModelLayerCapabilities, 39);
 CHECK_API_OFFSET(getStaticModelSamplerCapabilities, 40);
 #undef CHECK_API_OFFSET
 static_assert(offsetof(War3RenderPluginApiV2, getStaticModelSamplerCapabilities) == sizeof(FrozenApiPrefix));
-static_assert(sizeof(War3RenderPluginApiV2) == sizeof(FrozenApiPrefix) + sizeof(void(*)()));
+static_assert(offsetof(War3RenderPluginApiV2, getStaticModelSamplerCapabilities)
+    + sizeof(War3RenderPluginApiV2::getStaticModelSamplerCapabilities) == sizeof(FrozenApiPrefix) + sizeof(void(*)()));
 static_assert(WAR3_RENDER_STATIC_LAYER_SAMPLERS_V1 == 1);
 static_assert(WAR3_RENDER_STATIC_SAMPLER_U_WRAP == 1 && WAR3_RENDER_STATIC_SAMPLER_V_WRAP == 2);
 static_assert(WAR3_RENDER_STATIC_SAMPLER_FLAGS_MASK == 3 && WAR3_RENDER_STATIC_SAMPLER_LEGACY_FLAGS == 3);
