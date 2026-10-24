@@ -7,6 +7,7 @@
 #include "MdxPremRead.h"
 #include "MdxRigidStaticPreviewInternal.h"
 #include "MdxNoControllerStatic.h"
+#include "MdxPrimitiveRead.h"
 #include "War3RenderCore/GameKeyRanges.h"
 
 #include <algorithm>
@@ -260,27 +261,15 @@ void ParseGeosets(Reader outer, MdxModel& model, const MdxLimits& limits, std::s
         geoset.normals.resize(normalCount);
         for (auto& normal : geoset.normals)
             for (auto& axis : normal) axis = reader.F32("法线");
-        reader.ExpectTag("PTYP", "图元类型");
-        const auto groupCount = reader.Count(4, limits.maxTotalIndices, "图元类型");
-        std::vector<std::uint32_t> types(groupCount);
-        for (auto& type : types) type = reader.U32("图元类型");
-        reader.ExpectTag("PCNT", "图元计数");
-        if (reader.Count(4, limits.maxTotalIndices, "图元计数") != groupCount) Fail("MDX_VALUE_INVALID", "图元类型与计数组数不一致。");
-        std::vector<std::uint32_t> counts(groupCount);
-        for (auto& count : counts) count = reader.U32("图元计数");
-        reader.ExpectTag("PVTX", "图元索引");
-        const auto indexCount = reader.Count(2, limits.maxTotalIndices, "图元索引");
-        if (staticBudget) geoset.indices.reserve(indexCount);
-        origin.indexCount = indexCount; origin.indicesOffset = reader.Position();
-        std::uint64_t declared = 0;
-        for (const auto count : counts) declared += count;
-        if (declared != indexCount) Fail("MDX_VALUE_INVALID", "图元计数之和与索引数量不一致。");
-        for (std::size_t group = 0; group < groupCount; ++group) {
-            const bool triangles = types[group] == kTriangles && counts[group] % 3 == 0;
+        auto primitive = ReadPrimitiveView(reader, limits, vertexCount);
+        if (staticBudget) geoset.indices.reserve(primitive.indexCount);
+        origin.indexCount = primitive.indexCount; origin.indicesOffset = primitive.indices.Position();
+        for (std::size_t group = 0; group < primitive.groupCount; ++group) {
+            const auto type = primitive.types.U32("图元类型"), count = primitive.counts.U32("图元计数");
+            const bool triangles = type == kTriangles && count % 3 == 0;
             if (!triangles) ++geoset.skippedPrimitiveGroups;
-            for (std::uint32_t i = 0; i < counts[group]; ++i) {
-                const auto index = reader.U16("图元索引");
-                if (index >= vertexCount) Fail("MDX_VALUE_INVALID", "图元索引超出顶点范围。");
+            for (std::uint32_t i = 0; i < count; ++i) {
+                const auto index = primitive.indices.U16("图元索引");
                 if (triangles) geoset.indices.push_back(index);
             }
         }

@@ -3,6 +3,16 @@
 
 # 单独编译冻结的解析/姿势参考，不链接 Qt、Windows 或整个 Core/RenderSupport。
 get_filename_component(_render_core_repo "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+add_executable(war3-mdx-terrain-receiver-tests "${_render_core_repo}/tests/MdxTerrainReceiverTests.cpp"
+    "${_render_core_repo}/tests/RenderCoreAllocProbe.cpp")
+target_link_libraries(war3-mdx-terrain-receiver-tests PRIVATE War3RenderCore::MDX)
+war3_render_core_options(war3-mdx-terrain-receiver-tests)
+foreach(_receiver_group IN ITEMS ordered boundaries budgets)
+    add_test(NAME render-mdx-terrain-receiver-${_receiver_group}
+        COMMAND war3-mdx-terrain-receiver-tests ${_receiver_group})
+    set_tests_properties(render-mdx-terrain-receiver-${_receiver_group} PROPERTIES TIMEOUT 60)
+endforeach()
+
 add_executable(war3-render-core-tests
     "${_render_core_repo}/tests/RenderCoreTests.cpp"
     "${_render_core_repo}/tests/RenderCoreAllocProbe.cpp"

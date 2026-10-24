@@ -41,21 +41,6 @@ struct StaticParsePlan {
     }
 };
 
-void ValidateMdxLimits(const MdxLimits& limits) {
-    constexpr MdxLimits hard{};
-    if (limits.maxInputBytes > hard.maxInputBytes || limits.maxGeosets > hard.maxGeosets
-        || limits.maxVerticesPerGeoset > hard.maxVerticesPerGeoset || limits.maxTotalVertices > hard.maxTotalVertices
-        || limits.maxTotalIndices > hard.maxTotalIndices || limits.maxTextures > hard.maxTextures
-        || limits.maxMaterials > hard.maxMaterials || limits.maxLayersPerMaterial > hard.maxLayersPerMaterial
-        || limits.maxSequences > hard.maxSequences || limits.maxTrackKeys > hard.maxTrackKeys
-        || limits.maxGlobalSequences > hard.maxGlobalSequences || limits.maxBones > hard.maxBones
-        || limits.maxHelpers > hard.maxHelpers || limits.maxPivots > hard.maxPivots
-        || limits.maxMatrixGroupsPerGeoset > hard.maxMatrixGroupsPerGeoset
-        || limits.maxMatrixIndicesPerGeoset > hard.maxMatrixIndicesPerGeoset
-        || limits.maxTotalBoneTrackKeys > hard.maxTotalBoneTrackKeys || limits.maxNodes > hard.maxNodes)
-        Fail("MDX_LIMITS", "调用方不能放宽MDX读取上限。");
-}
-
 void StaticOnly(bool condition) {
     if (!condition) Fail("MDX_STATIC_PARSE_UNQUALIFIED", "静态预算读取不接纳控制器、缺失法线或未解释数据。");
 }
