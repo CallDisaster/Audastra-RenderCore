@@ -51,4 +51,12 @@ private:
 [[nodiscard]] Result<MdxTerrainReceiverSource> ReadMdxTerrainReceiverSource(
     std::span<const std::byte> bytes, std::size_t maximumResidentBytes, const MdxLimits& limits = {});
 
+// receiver专用完整静态语法门：先以既有两遍计量器检查所有可分配表，再用共用模型解析器
+// 验证完整引用和节点拓扑。接纳空法线、原strip/未知/空图元组；不按材质/GEOA可见性删几何。
+// 其它域仍限于已解释的经典静态块，拒绝TRS、材质/GEOA轨迹、未知尾部和外部动画。
+// 返回实际预收的解析峰值，模型在返回前释放；不授予caster、预览或原版保存资格，
+// 也不替代ReadMdxTerrainReceiverSource的原序几何来源。1..128MiB只可收紧；计量口径同静态解析API。
+[[nodiscard]] Result<std::size_t> ValidateMdxTerrainReceiverStaticBudgeted(
+    std::span<const std::byte> bytes, std::size_t maximumResidentBytes, const MdxLimits& limits = {});
+
 } // namespace War3Map::Render

@@ -4,6 +4,7 @@
 #include "MdxTestModel.h"
 #include "RenderCoreAllocProbe.h"
 #include "War3MapCore/Render/MdxPose.h"
+#include "War3MapCore/Render/MdxTerrainReceiver.h"
 #include "War3RenderCore/PoseBatch.h"
 #include <array>
 #include <bit>
@@ -31,6 +32,8 @@ struct Options {
     const char* extraChunk = nullptr;
     bool geoaTrack = false, overwrittenGeoaTrack = false, externalAnimation = false;
     std::uint32_t extraVertices = 0;
+    std::uint32_t primitiveType = 4;
+    bool normalsAbsent = false, receiverTailGroup = false;
 };
 struct Fixture {
     std::vector<std::byte> bytes;
@@ -82,9 +85,12 @@ Fixture Make(Options options = {}) {
         for (const auto& p : std::array<Vec3, 3>{{{2, 3, 4}, {12, 3, 4}, {2, 13, 4}}})
             for (const auto axis : p) w.F32(axis);
         for (std::uint32_t i = 3; i < vertices; ++i) { w.F32(0); w.F32(0); w.F32(0); }
-        w.Tag("NRMS"); w.U32(vertices); result.normalsOffset = w.bytes.size();
-        for (std::uint32_t i = 0; i < vertices; ++i) { w.F32(0); w.F32(0); w.F32(1); }
-        w.Tag("PTYP"); w.U32(1); w.U32(4); w.Tag("PCNT"); w.U32(1); w.U32(3);
+        w.Tag("NRMS"); w.U32(options.normalsAbsent ? 0 : vertices); result.normalsOffset = w.bytes.size();
+        if (!options.normalsAbsent) for (std::uint32_t i = 0; i < vertices; ++i) { w.F32(0); w.F32(0); w.F32(1); }
+        w.Tag("PTYP"); w.U32(options.receiverTailGroup ? 2 : 1); w.U32(options.primitiveType);
+        if (options.receiverTailGroup) w.U32(0x1234);
+        w.Tag("PCNT"); w.U32(options.receiverTailGroup ? 2 : 1); w.U32(3);
+        if (options.receiverTailGroup) w.U32(0);
         w.Tag("PVTX"); w.U32(3); w.U16(0); w.U16(1); w.U16(2);
         w.Tag("GNDX"); w.U32(vertices);
         for (std::uint32_t i = 0; i < vertices; ++i) w.Raw("\0", 1);
@@ -301,11 +307,60 @@ void BudgetedStaticRead() {
     Check(!lateDynamic.Succeeded() && HasCode(lateDynamic.diagnostics, "MDX_STATIC_PARSE_UNQUALIFIED")
         && RenderCoreAllocProbe::LargestAllocationBytes() < 4096, "末尾动态块也须在分配大数组前拒绝");
 }
+
+void BudgetedReceiverSyntax() {
+    constexpr std::size_t hard = 128u * 1024u * 1024u;
+    for (const auto type : {4u, 5u, 6u, 0x1234u}) {
+        const auto fixture = Make({.nonFinite = false, .flags = 0, .primitiveType = type,
+            .normalsAbsent = true, .receiverTailGroup = true});
+        const auto checked = ValidateMdxTerrainReceiverStaticBudgeted(fixture.bytes, hard);
+        Check(checked.Succeeded(), "receiver完整语法须接纳原strip/未知/空组与空法线");
+        const auto charged = *checked.value;
+        const auto exact = ValidateMdxTerrainReceiverStaticBudgeted(fixture.bytes, charged);
+        Check(exact.Succeeded() && *exact.value == charged, "receiver解析精确预收峰值应成功");
+        const auto shortRead = ValidateMdxTerrainReceiverStaticBudgeted(fixture.bytes, charged - 1);
+        Check(!shortRead.Succeeded() && HasCode(shortRead.diagnostics, "MDX_STATIC_PARSE_BUDGET"),
+            "receiver少一字节须在分配前拒绝");
+        Check(!ParseMdxNoControllerStaticBudgeted(fixture.bytes, hard).Succeeded(), "不得放宽caster静态资格");
+        const auto raw = ReadMdxTerrainReceiverSource(fixture.bytes, hard);
+        Check(raw.Succeeded() && raw.value->Geosets()[0].groups.size() == 2
+            && raw.value->Geosets()[0].groups[0].sourceType == type
+            && raw.value->Geosets()[0].groups[1].indexCount == 0, "语法检查不代替原序几何来源");
+        const auto ordinary = ParseMdx(fixture.bytes);
+        Check(ordinary.Succeeded() && !ordinary.value->noControllerStaticSource,
+            "专用receiver门不得向普通模型注入静态来源资格");
+    }
+    for (const auto invalid : {std::size_t{0}, hard + 1})
+        Check(!ValidateMdxTerrainReceiverStaticBudgeted(Make({.nonFinite = false}).bytes, invalid).Succeeded(),
+            "receiver调用方不能放宽解析硬预算");
+    for (const auto options : {Options{.nonFinite = false, .nodeTrack = "KGTR"},
+            Options{.nonFinite = false, .materialTrack = "KMTA"}, Options{.nonFinite = false, .extraChunk = "TXAN"},
+            Options{.nonFinite = false, .geoaTrack = true}, Options{.nonFinite = false, .overwrittenGeoaTrack = true},
+            Options{.nonFinite = false, .externalAnimation = true}})
+        Check(!ValidateMdxTerrainReceiverStaticBudgeted(Make(options).bytes, hard).Succeeded(),
+            "receiver仍拒绝整模型任何控制器和外部动画，后项不得覆盖前项动态来源");
+    auto cycle = Make({.nonFinite = false, .flags = 0}); Patch(cycle, cycle.flagsOffset - 4, 0);
+    const auto cyclic = ValidateMdxTerrainReceiverStaticBudgeted(cycle.bytes, hard);
+    Check(!cyclic.Succeeded() && HasCode(cyclic.diagnostics, "MDX_REFERENCE_INVALID"), "receiver共用完整父链语法门");
+    auto invalidReference = Make({.nonFinite = false, .flags = 0});
+    const auto raw = ReadMdxTerrainReceiverSource(invalidReference.bytes, hard);
+    Check(raw.Succeeded(), "取原创模型的原始索引位置");
+    const std::uint16_t badIndex = 7;
+    std::memcpy(invalidReference.bytes.data() + raw.value->Geosets()[0].groups[0].indicesByteOffset, &badIndex, 2);
+    Check(!ValidateMdxTerrainReceiverStaticBudgeted(invalidReference.bytes, hard).Succeeded(), "receiver共用索引范围校验");
+    const auto large = Make({.nonFinite = false, .flags = 0, .extraVertices = 60000, .primitiveType = 5});
+    RenderCoreAllocProbe::Begin();
+    const auto tight = ValidateMdxTerrainReceiverStaticBudgeted(large.bytes, 4096);
+    static_cast<void>(RenderCoreAllocProbe::End());
+    Check(!tight.Succeeded() && HasCode(tight.diagnostics, "MDX_STATIC_PARSE_BUDGET")
+        && RenderCoreAllocProbe::LargestAllocationBytes() < 4096, "receiver超预算时不得先分配大模型");
+}
 } // namespace
 
 int main() {
     try {
         RawBitsAndMatrices(); SourceRejections(); ChangedModelRejections(); OrdinaryAnimationStillWorks(); BudgetedStaticRead();
+        BudgetedReceiverSyntax();
         std::cout << "no-controller-static: source qualification, raw bits, reference/batch matrices and rejections passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

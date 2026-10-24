@@ -2,6 +2,7 @@
 // Copyright (C) 2026 CallDisaster
 
 #include "War3MapCore/Render/MdxModel.h"
+#include "War3MapCore/Render/MdxTerrainReceiver.h"
 #include "MdxNodeRead.h"
 #include "MdxNodeIdentity.h"
 #include "MdxPremRead.h"
@@ -746,6 +747,26 @@ Result<MdxNoControllerStaticParse> ParseMdxNoControllerStaticBudgeted(
         return Out::Failure(kSubsystem, "MDX_ALLOCATION", "静态预算读取分配失败。");
     } catch (const std::length_error&) {
         return Out::Failure(kSubsystem, "MDX_ALLOCATION", "静态预算读取超出容器容量。");
+    }
+}
+
+Result<std::size_t> ValidateMdxTerrainReceiverStaticBudgeted(
+    std::span<const std::byte> bytes, std::size_t maximumResidentBytes, const MdxLimits& limits) {
+    using Out = Result<std::size_t>;
+    try {
+        const auto plan = ScanStaticParse(bytes, limits, maximumResidentBytes, true);
+        // 使用同一解析器与严格拓扑校验；不封存noControllerStaticSource，避免把
+        // receiver的strip/未知组资格泄露给要求完整显示三角形的caster或预览API。
+        auto parsed = ParseMdxWithPolicy(bytes, limits, nullptr, nullptr, &plan);
+        if (!parsed.Succeeded()) { Out output; output.diagnostics = std::move(parsed.diagnostics); return output; }
+        if (parsed.value->geosets.empty()) Fail("MDX_RECEIVER_EMPTY", "接收面模型没有GEOS。");
+        return Out::Success(plan.peakBytes);
+    } catch (const MdxError& error) {
+        return Out::Failure(kSubsystem, error.code, error.what());
+    } catch (const std::bad_alloc&) {
+        return Out::Failure(kSubsystem, "MDX_ALLOCATION", "接收面静态语法检查分配失败。");
+    } catch (const std::length_error&) {
+        return Out::Failure(kSubsystem, "MDX_ALLOCATION", "接收面静态语法检查超出容器容量。");
     }
 }
 

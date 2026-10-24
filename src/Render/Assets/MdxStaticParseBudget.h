@@ -67,7 +67,7 @@ void ScanStaticMaterials(Reader reader, StaticParsePlan& plan, const MdxLimits& 
 }
 
 void ScanStaticGeosets(Reader outer, StaticParsePlan& plan, const MdxLimits& limits,
-    std::size_t& totalVertices, std::size_t& totalIndices) {
+    std::size_t& totalVertices, std::size_t& totalIndices, bool receiver = false) {
     while (outer.Remaining()) {
         const auto start = outer.Position();
         const auto size = outer.U32("geoset大小");
@@ -79,16 +79,19 @@ void ScanStaticGeosets(Reader outer, StaticParsePlan& plan, const MdxLimits& lim
         plan.Count(totalVertices, vertices, limits.maxTotalVertices, sizeof(std::array<float, 3>));
         reader.Skip(vertices * 12, "顶点"); reader.ExpectTag("NRMS", "法线");
         const auto normals = reader.Count(12, limits.maxVerticesPerGeoset, "法线");
-        StaticOnly(normals == vertices);
+        StaticOnly(normals == vertices || (receiver && normals == 0));
         plan.Charge(normals, sizeof(std::array<float, 3>)); reader.Skip(normals * 12, "法线");
         reader.ExpectTag("PTYP", "图元类型");
         const auto groups = reader.Count(4, limits.maxTotalIndices, "图元类型");
-        for (std::size_t group = 0; group < groups; ++group) StaticOnly(reader.U32("图元类型") == kTriangles);
+        for (std::size_t group = 0; group < groups; ++group) {
+            const auto type = reader.U32("图元类型");
+            StaticOnly(receiver || type == kTriangles);
+        }
         reader.ExpectTag("PCNT", "图元计数");
         StaticOnly(reader.Count(4, limits.maxTotalIndices, "图元计数") == groups);
         std::uint64_t declared = 0;
         for (std::size_t group = 0; group < groups; ++group) {
-            const auto count = reader.U32("图元计数"); StaticOnly(count % 3 == 0); declared += count;
+            const auto count = reader.U32("图元计数"); StaticOnly(receiver || count % 3 == 0); declared += count;
         }
         plan.geosetScratch = std::max(plan.geosetScratch, groups * 2 * sizeof(std::uint32_t));
         reader.ExpectTag("PVTX", "图元索引");
@@ -120,7 +123,7 @@ void ScanStaticGeosets(Reader outer, StaticParsePlan& plan, const MdxLimits& lim
 }
 
 StaticParsePlan ScanStaticParse(std::span<const std::byte> bytes, const MdxLimits& limits,
-    std::size_t maximumBytes) {
+    std::size_t maximumBytes, bool receiver = false) {
     ValidateMdxLimits(limits);
     if (!maximumBytes || maximumBytes > 128u * 1024u * 1024u)
         Fail("MDX_STATIC_PARSE_BUDGET", "静态解析预算必须为1至128MiB，不能放宽硬上限。");
@@ -154,7 +157,7 @@ StaticParsePlan ScanStaticParse(std::span<const std::byte> bytes, const MdxLimit
                 chunk.Skip(4, "替换贴图"); plan.String(chunk.FixedStringView(260, "贴图路径")); chunk.Skip(4, "贴图标志");
             }
         } else if (tag == "MTLS") ScanStaticMaterials(chunk, plan, limits);
-        else if (tag == "GEOS") ScanStaticGeosets(chunk, plan, limits, totalVertices, totalIndices);
+        else if (tag == "GEOS") ScanStaticGeosets(chunk, plan, limits, totalVertices, totalIndices, receiver);
         else if (tag == "GEOA") {
             while (chunk.Remaining()) {
                 StaticOnly(chunk.U32("GEOA大小") == 28); chunk.Skip(4, "静态alpha");
