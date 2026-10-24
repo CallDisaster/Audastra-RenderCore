@@ -9,6 +9,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace War3Map::Render::MdxReadInternal {
@@ -64,6 +65,21 @@ public:
         std::string tag(reinterpret_cast<const char*>(bytes_.data() + position_), 4);
         position_ += 4;
         return tag;
+    }
+    // 静态预算预扫只借用原字节，不为名称/标记分配字符串。
+    std::string_view TagView(const char* what) {
+        Need(4, what);
+        const std::string_view value(reinterpret_cast<const char*>(bytes_.data() + position_), 4);
+        position_ += 4;
+        return value;
+    }
+    std::string_view FixedStringView(std::size_t length, const char* what) {
+        Need(length, what);
+        const auto* begin = reinterpret_cast<const char*>(bytes_.data() + position_);
+        const auto* terminator = static_cast<const char*>(std::memchr(begin, 0, length));
+        const std::string_view value(begin, terminator ? static_cast<std::size_t>(terminator - begin) : length);
+        position_ += length;
+        return value;
     }
     [[nodiscard]] std::string PeekTag() const {
         if (Remaining() < 4) return {};

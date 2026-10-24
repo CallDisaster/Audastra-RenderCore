@@ -33,3 +33,31 @@
 原创回归登记为 `render-no-controller-static`，包含原始NaN载荷与负零、静态父子链、
 参考/批量矩阵与几何、热路径无分配、源文件动态内容拒绝、解析后资格失效及原有动画继续生效。
 这些检查验证CPU读取和求值合同；实际游戏画面与宿主GPU显示仍需要另行核对。
+
+0.1.20新增静态caster预算入口：
+
+```cpp
+auto parsed = ParseMdxNoControllerStaticBudgeted(bytes, maximumResidentBytes, limits);
+// 成功：parsed.value->model 和 parsed.value->chargedPeakBytes
+```
+
+它先用同一个有界Reader无模型分配扫描全部静态记录，按调用方预算计入模型、
+容器条目、NUL前原文字节、法线/UV/矩阵数组、静态GEOA、临时图元表、连续节点拓扑表
+与最终不可伪造来源的nodes/pivotBits。第二遍复用既有parser，但使用已计量的精确reserve；
+不会先把大模型展开，再检查编译预算。动态/未知块即使在文件末尾，也在展开前拒绝。
+
+`chargedPeakBytes`表示有效存储的保守阶段峰值：模型保留数组，加上GEOA主表与当前
+GEOS/GEOA局部表/节点拓扑表中的最大者；再与模型加来源封存的阶段比较。重复合法块
+累计计数，静态GEOA仍按文件顺序最后值生效；重复PIVT继续由原解析规则拒绝。
+输入原字节为借用，不在该预算内；固定调用栈、有界错误诊断、分配器管理数据（包括
+shared_ptr控制块）和系统RSS不属于该有效存储口径。字符串按原文长度加终止符计量，
+不把标准库的小字符串布局或分配粒度冒充跨编译器合同。最大预算为128MiB，只能收紧。
+
+此入口只接受无控制器caster子集，并将缺失法线等本来无法编译的模型提前拒绝。
+成功不复制普通读取的提示性诊断；后续Compile仍检查封存资格并给出兼容警告。
+预算耗尽为 `MDX_STATIC_PARSE_BUDGET`，动态/未知语义为 `MDX_STATIC_PARSE_UNQUALIFIED`，
+结构损坏和引用错误保持原有独立诊断；失败不返回部分模型。普通 `ParseMdx` 默认行为不变。
+
+预算回归加入既有 `render-no-controller-static`：精确/少一字节、原数量硬上限、
+父链环、重复静态GEOA、大模型小预算及末尾动态块分配前拒绝。新增探针只检查失败前
+没有大型模型数组分配；它不把有效存储计量等同于分配器或RSS测量。

@@ -36,6 +36,8 @@ struct GeosetAnimation {
     MdxGeosetAnimation value;
 };
 
+#include "MdxStaticParseBudget.h"
+
 // 跳过一条动画轨迹：tag、count、插值类型、全局序列、按键。valueBytes 为单个值的字节数。
 void SkipTrack(Reader& reader, std::size_t valueBytes, const MdxLimits& limits, const char* what) {
     const auto count = reader.U32(what);
@@ -92,7 +94,7 @@ void ParseTextures(Reader reader, MdxModel& model, const MdxLimits& limits) {
 }
 
 void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits,
-    std::size_t& retainedAlphaKeys, std::size_t& retainedTextureBytes) {
+    std::size_t& retainedAlphaKeys, std::size_t& retainedTextureBytes, bool staticBudget = false) {
     while (reader.Remaining() != 0) {
         const auto materialStart = reader.Position();
         const auto materialBytes = reader.U32("材质大小");
@@ -105,6 +107,7 @@ void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits,
         reader.ExpectTag("LAYS", "材质层");
         const auto layerCount = reader.U32("材质层数量");
         if (layerCount > limits.maxLayersPerMaterial) Fail("MDX_LIMIT", "材质层数量超过上限。");
+        if (staticBudget) material.layers.reserve(layerCount);
         for (std::uint32_t layerIndex = 0; layerIndex < layerCount; ++layerIndex) {
             const auto layerStart = reader.Position();
             const auto layerBytes = reader.U32("材质层大小");
@@ -222,7 +225,7 @@ void ParseMaterials(Reader reader, MdxModel& model, const MdxLimits& limits,
 
 void ParseGeosets(Reader outer, MdxModel& model, const MdxLimits& limits, std::size_t& totalVertices,
     std::size_t& totalIndices, std::vector<MdxRigidStaticGeosetOrigin>* rigidOrigins,
-    std::vector<Diagnostic>& diagnostics) {
+    std::vector<Diagnostic>& diagnostics, bool staticBudget = false) {
     while (outer.Remaining() != 0) {
         const auto start = outer.Position();
         const auto bytes = outer.U32("geoset 大小");
@@ -267,6 +270,7 @@ void ParseGeosets(Reader outer, MdxModel& model, const MdxLimits& limits, std::s
         for (auto& count : counts) count = reader.U32("图元计数");
         reader.ExpectTag("PVTX", "图元索引");
         const auto indexCount = reader.Count(2, limits.maxTotalIndices, "图元索引");
+        if (staticBudget) geoset.indices.reserve(indexCount);
         origin.indexCount = indexCount; origin.indicesOffset = reader.Position();
         std::uint64_t declared = 0;
         for (const auto count : counts) declared += count;
@@ -494,25 +498,21 @@ struct NoControllerRead {
 };
 
 static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, const MdxLimits& limits,
-    std::vector<MdxRigidStaticGeosetOrigin>* rigidOrigins, NoControllerRead* staticRead = nullptr) {
+    std::vector<MdxRigidStaticGeosetOrigin>* rigidOrigins, NoControllerRead* staticRead = nullptr,
+    const StaticParsePlan* staticPlan = nullptr) {
     try {
-        constexpr MdxLimits hard{};
-        if (limits.maxInputBytes > hard.maxInputBytes || limits.maxGeosets > hard.maxGeosets
-            || limits.maxVerticesPerGeoset > hard.maxVerticesPerGeoset || limits.maxTotalVertices > hard.maxTotalVertices
-            || limits.maxTotalIndices > hard.maxTotalIndices || limits.maxTextures > hard.maxTextures
-            || limits.maxMaterials > hard.maxMaterials || limits.maxLayersPerMaterial > hard.maxLayersPerMaterial
-            || limits.maxSequences > hard.maxSequences || limits.maxTrackKeys > hard.maxTrackKeys
-            || limits.maxGlobalSequences > hard.maxGlobalSequences || limits.maxBones > hard.maxBones
-            || limits.maxHelpers > hard.maxHelpers || limits.maxPivots > hard.maxPivots
-            || limits.maxMatrixGroupsPerGeoset > hard.maxMatrixGroupsPerGeoset
-            || limits.maxMatrixIndicesPerGeoset > hard.maxMatrixIndicesPerGeoset
-            || limits.maxTotalBoneTrackKeys > hard.maxTotalBoneTrackKeys || limits.maxNodes > hard.maxNodes)
-            Fail("MDX_LIMITS", "调用方不能放宽 MDX 读取上限。");
+        ValidateMdxLimits(limits);
         if (bytes.size() > limits.maxInputBytes) Fail("MDX_LIMIT", "MDX 文件超过大小上限。");
         Reader file(bytes, 0, bytes.size());
         if (file.Tag("文件头") != "MDLX") Fail("MDX_MAGIC", "不是 MDX 文件（缺少 MDLX 文件头）。");
         MdxModel model;
         std::vector<GeosetAnimation> animations;
+        if (staticPlan) {
+            model.sequences.reserve(staticPlan->sequences); model.textures.reserve(staticPlan->textures);
+            model.materials.reserve(staticPlan->materials); model.geosets.reserve(staticPlan->geosets);
+            model.bones.reserve(staticPlan->bones); model.helpers.reserve(staticPlan->helpers);
+            model.pivots.reserve(staticPlan->pivots); animations.reserve(staticPlan->animations);
+        }
         std::vector<Diagnostic> diagnostics;
         std::size_t totalVertices = 0, totalIndices = 0, totalBoneKeys = 0;
         bool seenPivots = false;
@@ -551,12 +551,12 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
             } else if (tag == "TEXS") {
                 ParseTextures(chunk, model, limits);
             } else if (tag == "MTLS") {
-                ParseMaterials(chunk, model, limits, retainedMaterialAlphaKeys, retainedMaterialTextureBytes);
+                ParseMaterials(chunk, model, limits, retainedMaterialAlphaKeys, retainedMaterialTextureBytes, staticPlan != nullptr);
             } else if (tag == "GEOS") {
                 if (model.version != kClassicVersion) Fail("MDX_VERSION_UNSUPPORTED", "GEOS 之前缺少版本 800 的 VERS 块。");
-                ParseGeosets(chunk, model, limits, totalVertices, totalIndices, rigidOrigins, diagnostics);
+                ParseGeosets(chunk, model, limits, totalVertices, totalIndices, rigidOrigins, diagnostics, staticPlan != nullptr);
             } else if (tag == "GEOA") {
-                auto parsed = ParseGeosetAnimations(chunk, limits);
+                auto parsed = ParseGeosetAnimations(chunk, limits, staticPlan != nullptr);
                 if (parsed.size() > limits.maxGeosets - animations.size())
                     Fail("MDX_LIMIT", "geoset 动画总数超过上限。");
                 animations.insert(animations.end(), std::make_move_iterator(parsed.begin()),
@@ -605,7 +605,7 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
         for (const auto& material : model.materials)
             for (const auto& layer : material.layers)
                 if (layer.textureId >= model.textures.size()) Fail("MDX_REFERENCE_INVALID", "材质层引用了不存在的贴图。");
-        ResolvePremSentinelIds(model, diagnostics);
+        if (!staticPlan) ResolvePremSentinelIds(model, diagnostics);
         const auto checkTracks = [&](const MdxNode& node) {
             const auto check = [&](const auto& track, const char* tag) {
                 if (track && track->globalSequence != kNoGlobalSequence
@@ -624,46 +624,50 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
             if (model.skinningTopologyComplete) model.skinningTopologyIssue = std::move(reason);
             model.skinningTopologyComplete = false;
         };
-        std::map<std::uint32_t, const MdxNode*> nodes;
-        const auto registerNode = [&](const MdxNode& node) {
-            if (node.objectId == UINT32_MAX)
-                Fail("MDX_REFERENCE_INVALID", "公共节点对象 ID 为无效哨兵：offset="
-                    + std::to_string(node.sourceByteOffset + 84) + "；不符合已验证的 PREM 读取次序资格。");
-            const auto [existing, inserted] = nodes.emplace(node.objectId, &node);
-            if (!inserted)
-                Fail("MDX_REFERENCE_INVALID", "公共节点对象 ID 重复：id=" + std::to_string(node.objectId)
-                    + " offset=" + std::to_string(node.sourceByteOffset + 84)
-                    + " first offset=" + std::to_string(existing->second->sourceByteOffset + 84) + "。");
-            if (node.parentId < -1) Fail("MDX_REFERENCE_INVALID", "节点父 ID 不是有效对象或根哨兵。");
-            if (node.objectId >= model.pivots.size()) incomplete("节点 objectId 没有对应 PIVT 轴心。");
-        };
-        ForEachMdxNode(model, registerNode);
-        // 已识别的节点父链不能成环；引用其它尚未解析的节点种类时保留静态几何，拒绝宣布可蒙皮。
-        std::map<std::uint32_t, std::uint8_t> visit;
-        for (const auto& [id, node] : nodes) {
-            std::vector<std::uint32_t> path;
-            auto* current = node;
-            while (current && visit[current->objectId] != 2) {
-                if (visit[current->objectId] == 1) Fail("MDX_REFERENCE_INVALID", "节点父链形成环。");
-                visit[current->objectId] = 1;
-                path.push_back(current->objectId);
-                if (current->parentId == -1) break;
-                const auto parent = nodes.find(static_cast<std::uint32_t>(current->parentId));
-                if (parent == nodes.end()) {
-                    incomplete("节点父 ID 指向未解析的节点种类，不能推测姿态。");
-                    break;
+        if (staticPlan) {
+            ValidateStaticTopology(model);
+        } else {
+            std::map<std::uint32_t, const MdxNode*> nodes;
+            const auto registerNode = [&](const MdxNode& node) {
+                if (node.objectId == UINT32_MAX)
+                    Fail("MDX_REFERENCE_INVALID", "公共节点对象 ID 为无效哨兵：offset="
+                        + std::to_string(node.sourceByteOffset + 84) + "；不符合已验证的 PREM 读取次序资格。");
+                const auto [existing, inserted] = nodes.emplace(node.objectId, &node);
+                if (!inserted)
+                    Fail("MDX_REFERENCE_INVALID", "公共节点对象 ID 重复：id=" + std::to_string(node.objectId)
+                        + " offset=" + std::to_string(node.sourceByteOffset + 84)
+                        + " first offset=" + std::to_string(existing->second->sourceByteOffset + 84) + "。");
+                if (node.parentId < -1) Fail("MDX_REFERENCE_INVALID", "节点父 ID 不是有效对象或根哨兵。");
+                if (node.objectId >= model.pivots.size()) incomplete("节点 objectId 没有对应 PIVT 轴心。");
+            };
+            ForEachMdxNode(model, registerNode);
+            // 已识别的节点父链不能成环；引用其它尚未解析的节点种类时保留静态几何，拒绝宣布可蒙皮。
+            std::map<std::uint32_t, std::uint8_t> visit;
+            for (const auto& [id, node] : nodes) {
+                std::vector<std::uint32_t> path;
+                auto* current = node;
+                while (current && visit[current->objectId] != 2) {
+                    if (visit[current->objectId] == 1) Fail("MDX_REFERENCE_INVALID", "节点父链形成环。");
+                    visit[current->objectId] = 1;
+                    path.push_back(current->objectId);
+                    if (current->parentId == -1) break;
+                    const auto parent = nodes.find(static_cast<std::uint32_t>(current->parentId));
+                    if (parent == nodes.end()) {
+                        incomplete("节点父 ID 指向未解析的节点种类，不能推测姿态。");
+                        break;
+                    }
+                    current = parent->second;
                 }
-                current = parent->second;
+                for (const auto traversed : path) visit[traversed] = 2;
             }
-            for (const auto traversed : path) visit[traversed] = 2;
+            for (const auto& geoset : model.geosets) {
+                if (geoset.uninterpretedTailBytes != 0)
+                    incomplete("GEOS 含未解释的尾部数据，不能推测蒙皮语义。");
+                for (const auto objectId : geoset.matrixIndices)
+                    if (!nodes.contains(objectId)) incomplete("MATS 引用了未解析的节点对象 ID。");
+            }
         }
-        for (const auto& geoset : model.geosets) {
-            if (geoset.uninterpretedTailBytes != 0)
-                incomplete("GEOS 含未解释的尾部数据，不能推测蒙皮语义。");
-            for (const auto objectId : geoset.matrixIndices)
-                if (!nodes.contains(objectId)) incomplete("MATS 引用了未解析的节点对象 ID。");
-        }
-        const auto stand = StandSequence(model);
+        const auto stand = staticPlan ? std::nullopt : StandSequence(model);
         // 同一 geoset 有多条 GEOA 时按文件顺序后者生效（合并动作的模型常追加覆盖全部动作的新条目），
         // 并逐个报告被覆盖的 geoset；不把整块几何体当作未解释数据隐藏。
         std::vector<std::uint32_t> overridden;
@@ -673,7 +677,7 @@ static Result<MdxModel> ParseMdxWithPolicy(std::span<const std::byte> bytes, con
                 staticSourceIssue = "源GEOA含轨迹或未解释语义（包括被后项覆盖的条目）";
             if (animation.geosetId >= model.geosets.size()) Fail("MDX_REFERENCE_INVALID", "geoset 动画引用了不存在的 geoset。");
             auto& geoset = model.geosets[animation.geosetId];
-            if (geoset.animation.has_value()
+            if (!staticPlan && geoset.animation.has_value()
                 && std::find(overridden.begin(), overridden.end(), animation.geosetId) == overridden.end())
                 overridden.push_back(animation.geosetId);
             geoset.visibleInStand = StandAlpha(animation.value, stand) > 0.0f;
@@ -732,6 +736,27 @@ Result<MdxModel> ParseMdx(std::span<const std::byte> bytes, const MdxLimits& lim
         return Result<MdxModel>::Failure(kSubsystem, "MDX_ALLOCATION", "静态节点来源分配失败。");
     } catch (const std::length_error&) {
         return Result<MdxModel>::Failure(kSubsystem, "MDX_ALLOCATION", "静态节点来源超出容器容量。");
+    }
+}
+
+Result<MdxNoControllerStaticParse> ParseMdxNoControllerStaticBudgeted(
+    std::span<const std::byte> bytes, std::size_t maximumResidentBytes, const MdxLimits& limits) {
+    using Out = Result<MdxNoControllerStaticParse>;
+    try {
+        const auto plan = ScanStaticParse(bytes, limits, maximumResidentBytes);
+        NoControllerRead read;
+        auto parsed = ParseMdxWithPolicy(bytes, limits, nullptr, &read, &plan);
+        if (!parsed.Succeeded()) { Out output; output.diagnostics = std::move(parsed.diagnostics); return output; }
+        if (!read.qualified) Fail("MDX_STATIC_PARSE_UNQUALIFIED", "模型不具备整模型无控制器静态资格。");
+        parsed.value->noControllerStaticSource = std::shared_ptr<const MdxNoControllerStaticSource>(
+            new MdxNoControllerStaticSource(*parsed.value, read.pivotByteOffset));
+        return Out::Success({std::move(*parsed.value), plan.peakBytes});
+    } catch (const MdxError& error) {
+        return Out::Failure(kSubsystem, error.code, error.what());
+    } catch (const std::bad_alloc&) {
+        return Out::Failure(kSubsystem, "MDX_ALLOCATION", "静态预算读取分配失败。");
+    } catch (const std::length_error&) {
+        return Out::Failure(kSubsystem, "MDX_ALLOCATION", "静态预算读取超出容器容量。");
     }
 }
 

@@ -30,6 +30,7 @@ struct Options {
     const char* materialTrack = nullptr;
     const char* extraChunk = nullptr;
     bool geoaTrack = false, overwrittenGeoaTrack = false, externalAnimation = false;
+    std::uint32_t extraVertices = 0;
 };
 struct Fixture {
     std::vector<std::byte> bytes;
@@ -75,19 +76,22 @@ Fixture Make(Options options = {}) {
             if (std::strcmp(options.materialTrack, "KMTF") == 0) w.U32(0); else w.F32(1);
         }
         w.EndInclusive(layer); w.EndInclusive(material); w.EndChunk(chunk); }
+    const auto vertices = 3 + options.extraVertices;
     w.Tag("GEOS"); { const auto chunk = w.Begin(); const auto geoset = w.Begin();
-        w.Tag("VRTX"); w.U32(3); result.positionsOffset = w.bytes.size();
+        w.Tag("VRTX"); w.U32(vertices); result.positionsOffset = w.bytes.size();
         for (const auto& p : std::array<Vec3, 3>{{{2, 3, 4}, {12, 3, 4}, {2, 13, 4}}})
             for (const auto axis : p) w.F32(axis);
-        w.Tag("NRMS"); w.U32(3); result.normalsOffset = w.bytes.size();
-        for (int i = 0; i < 3; ++i) { w.F32(0); w.F32(0); w.F32(1); }
+        for (std::uint32_t i = 3; i < vertices; ++i) { w.F32(0); w.F32(0); w.F32(0); }
+        w.Tag("NRMS"); w.U32(vertices); result.normalsOffset = w.bytes.size();
+        for (std::uint32_t i = 0; i < vertices; ++i) { w.F32(0); w.F32(0); w.F32(1); }
         w.Tag("PTYP"); w.U32(1); w.U32(4); w.Tag("PCNT"); w.U32(1); w.U32(3);
         w.Tag("PVTX"); w.U32(3); w.U16(0); w.U16(1); w.U16(2);
-        w.Tag("GNDX"); w.U32(3); w.Raw("\0\0\0", 3);
+        w.Tag("GNDX"); w.U32(vertices);
+        for (std::uint32_t i = 0; i < vertices; ++i) w.Raw("\0", 1);
         w.Tag("MTGC"); w.U32(1); w.U32(1); w.Tag("MATS"); w.U32(1); w.U32(0);
         w.U32(0); w.U32(0); w.U32(0); for (int i = 0; i < 7; ++i) w.F32(0); w.U32(0);
-        w.Tag("UVAS"); w.U32(1); w.Tag("UVBS"); w.U32(3);
-        for (int i = 0; i < 3; ++i) { w.F32(static_cast<float>(i)); w.F32(0); }
+        w.Tag("UVAS"); w.U32(1); w.Tag("UVBS"); w.U32(vertices);
+        for (std::uint32_t i = 0; i < vertices; ++i) { w.F32(static_cast<float>(i)); w.F32(0); }
         w.EndInclusive(geoset); w.EndChunk(chunk); }
     Geoa(w, options.geoaTrack || options.overwrittenGeoaTrack);
     if (options.overwrittenGeoaTrack) Geoa(w, false);
@@ -240,11 +244,68 @@ void OrdinaryAnimationStillWorks() {
     const auto changedCompiled = Compile(changed);
     Check(changedCompiled.Succeeded() && !changedCompiled.value->UsesNoControllerStatic(), "有限模型修改后应按普通路径重新校验");
 }
+void BudgetedStaticRead() {
+    constexpr std::size_t hard = 128u * 1024u * 1024u;
+    const auto fixture = Make({.parent = true});
+    const auto parsed = ParseMdxNoControllerStaticBudgeted(fixture.bytes, hard);
+    Check(parsed.Succeeded() && parsed.value->model.noControllerStaticSource, "预算读取须封存真实静态来源");
+    Check(Compile(parsed.value->model).Succeeded(), "预算读取应保持原静态编译资格");
+    const auto charged = parsed.value->chargedPeakBytes;
+    Check(charged > sizeof(MdxModel) && charged < hard, "须返回实际条目及临时表有效存储计量");
+    const auto exact = ParseMdxNoControllerStaticBudgeted(fixture.bytes, charged);
+    Check(exact.Succeeded() && exact.value->chargedPeakBytes == charged, "精确预算应成功");
+    const auto shortRead = ParseMdxNoControllerStaticBudgeted(fixture.bytes, charged - 1);
+    Check(!shortRead.Succeeded() && !shortRead.value && HasCode(shortRead.diagnostics, "MDX_STATIC_PARSE_BUDGET"),
+        "少一字节须在分配模型前整体拒绝");
+    for (const auto invalid : {std::size_t{0}, hard + 1})
+        Check(!ParseMdxNoControllerStaticBudgeted(fixture.bytes, invalid).Succeeded(), "预算硬上限不能放宽");
+    MdxLimits limits; limits.maxVerticesPerGeoset = 2;
+    Check(!ParseMdxNoControllerStaticBudgeted(fixture.bytes, hard, limits).Succeeded(), "原条目硬上限仍生效");
+    const auto dynamic = Make({.nonFinite = false, .flags = 0, .nodeTrack = "KGTR"});
+    const auto rejected = ParseMdxNoControllerStaticBudgeted(dynamic.bytes, hard);
+    Check(!rejected.Succeeded() && HasCode(rejected.diagnostics, "MDX_STATIC_PARSE_UNQUALIFIED"), "动态拒绝不能伪装预算耗尽");
+    Check(ParseMdx(dynamic.bytes).Succeeded(), "普通ParseMdx动画行为不得改变");
+    auto cycle = Make({.nonFinite = false, .flags = 0}); Patch(cycle, cycle.flagsOffset - 4, 0);
+    const auto cyclic = ParseMdxNoControllerStaticBudgeted(cycle.bytes, hard);
+    Check(!cyclic.Succeeded() && HasCode(cyclic.diagnostics, "MDX_REFERENCE_INVALID"), "连续拓扑表仍拒父链环");
+    Writer extra; Geoa(extra, false);
+    auto duplicate = Make(); duplicate.bytes.insert(duplicate.bytes.end(), extra.bytes.begin(), extra.bytes.end());
+    Check(ParseMdxNoControllerStaticBudgeted(duplicate.bytes, hard).Succeeded(), "重复静态GEOA须保留已有最后值语义");
+    Writer texture; texture.Tag("TEXS"); texture.U32(268); texture.U32(0); texture.Fixed("second.blp", 260); texture.U32(0);
+    auto repeated = Make(); repeated.bytes.insert(repeated.bytes.end(), texture.bytes.begin(), texture.bytes.end());
+    limits = {}; limits.maxTextures = 1;
+    const auto cumulative = ParseMdxNoControllerStaticBudgeted(repeated.bytes, hard, limits);
+    Check(!cumulative.Succeeded() && HasCode(cumulative.diagnostics, "MDX_LIMIT"), "重复块必须按累计数量收紧");
+    Writer material; material.Tag("MTLS"); const auto chunk = material.Begin(); const auto item = material.Begin();
+    material.U32(0); material.U32(0); material.Tag("LAYS"); material.U32(1); const auto layer = material.Begin();
+    material.U32(0); material.U32(0); material.U32(0); material.U32(UINT32_MAX); material.U32(0); material.F32(1);
+    material.EndInclusive(layer); material.EndInclusive(item); material.EndChunk(chunk);
+    auto expanded = Make({.parent = true}); expanded.bytes.insert(expanded.bytes.end(), material.bytes.begin(), material.bytes.end());
+    const auto expandedRead = ParseMdxNoControllerStaticBudgeted(expanded.bytes, hard);
+    Check(expandedRead.Succeeded() && expandedRead.value->chargedPeakBytes >= charged + sizeof(MdxMaterial) + sizeof(MdxLayer),
+        "新增材质与层必须增加对应条目有效存储");
+
+    // 有效的大模型字节先在探针外备好。小预算/末尾未知控制器必须在展开
+    // 顶点、法线等大数组之前拒绝；探针单次最大分配只允许有界错误诊断。
+    auto large = Make({.nonFinite = false, .flags = 0, .extraVertices = 60000});
+    RenderCoreAllocProbe::Begin();
+    const auto tight = ParseMdxNoControllerStaticBudgeted(large.bytes, 4096);
+    static_cast<void>(RenderCoreAllocProbe::End());
+    Check(!tight.Succeeded() && HasCode(tight.diagnostics, "MDX_STATIC_PARSE_BUDGET")
+        && RenderCoreAllocProbe::LargestAllocationBytes() < 4096, "预算失败前不得展开大模型");
+    Writer tail; tail.Tag("TXAN"); tail.U32(0);
+    large.bytes.insert(large.bytes.end(), tail.bytes.begin(), tail.bytes.end());
+    RenderCoreAllocProbe::Begin();
+    const auto lateDynamic = ParseMdxNoControllerStaticBudgeted(large.bytes, hard);
+    static_cast<void>(RenderCoreAllocProbe::End());
+    Check(!lateDynamic.Succeeded() && HasCode(lateDynamic.diagnostics, "MDX_STATIC_PARSE_UNQUALIFIED")
+        && RenderCoreAllocProbe::LargestAllocationBytes() < 4096, "末尾动态块也须在分配大数组前拒绝");
+}
 } // namespace
 
 int main() {
     try {
-        RawBitsAndMatrices(); SourceRejections(); ChangedModelRejections(); OrdinaryAnimationStillWorks();
+        RawBitsAndMatrices(); SourceRejections(); ChangedModelRejections(); OrdinaryAnimationStillWorks(); BudgetedStaticRead();
         std::cout << "no-controller-static: source qualification, raw bits, reference/batch matrices and rejections passed\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

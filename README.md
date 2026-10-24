@@ -3,7 +3,7 @@
 
 # Audastra RenderCore
 
-Audastra 地图编辑器与 WarVK 共用的经典版 Warcraft III（1.27a）模型渲染核心，当前版本 0.1.19（工程内部名 War3RenderCore）。
+Audastra 地图编辑器与 WarVK 共用的经典版 Warcraft III（1.27a）模型渲染核心，当前版本 0.1.20（工程内部名 War3RenderCore）。
 内容：经典 MDX 有界解析、冻结姿态参考、预热 CPU 批量求值、插件输入可移植校验与原创测试。
 只依赖 C++20 编译器和标准库，不包含 Qt、设备、GPU 后端、MPQ 读取或游戏安装逻辑。
 浮点选项为 MSVC `/fp:precise`、其他编译器 `-ffp-contract=off`。
@@ -55,6 +55,10 @@ FORGE 配置及实际消费者构建都拒绝未提交的共享修改；不要�
 逐位相同的轨迹生效，不改变源键序。成功警告通过独立有界视图提供材质层及原键偏移，
 默认 PoseDiagnostic 仍为32字节。PREM 读取不代表子模型已经发射或 GPU 绘制。
 接口和边界见 `docs/KMTA_PREM_PREVIEW.md`；候选验证回执由消费者记录。
+
+0.1.20 新增静态caster专用 `ParseMdxNoControllerStaticBudgeted`：先无模型分配预扫静态条目及有界临时表，
+预算通过后复用共享parser精确reserve，并封存真实无控制器来源。预算不代表分配器/RSS承诺；普通 `ParseMdx` 默认行为不变。
+接口、阶段峰值和验证边界见 `docs/NO_CONTROLLER_STATIC_MODELS.md`。
 
 0.1.19 实现贴图坐标动画（TXAN，流动/滚动贴图）：解析器读取 TXAN 的 KTAT/KTAR/KTAS，材质贴图 sidecar
 按原版节点轨迹编译器（同一逐动作区间与全局时钟规则，代码与节点共用 `NodeTrackCompile.h`）编译，并按 IDA 6F77C730

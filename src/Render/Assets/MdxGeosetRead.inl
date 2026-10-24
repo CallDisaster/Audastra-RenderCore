@@ -2,8 +2,9 @@
 // Copyright (C) 2026 CallDisaster
 
 // 在 MdxModel.cpp 匿名命名空间内包含；每个 GEOA 对象拥有独立有界 reader。
-std::vector<GeosetAnimation> ParseGeosetAnimations(Reader reader, const MdxLimits& limits) {
+std::vector<GeosetAnimation> ParseGeosetAnimations(Reader reader, const MdxLimits& limits, bool staticBudget = false) {
     std::vector<GeosetAnimation> animations;
+    if (staticBudget) animations.reserve(reader.Remaining() / 28);
     while (reader.Remaining() != 0) {
         const auto start = reader.Position(), bytes = static_cast<std::size_t>(reader.U32("geoset 动画大小"));
         if (bytes < 28 || bytes - 4 > reader.Remaining()) Fail("MDX_SIZE_INVALID", "geoset 动画大小无效。");

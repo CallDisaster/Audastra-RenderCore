@@ -298,6 +298,7 @@ struct MdxPremEmitter {
 };
 
 struct MdxModel;
+struct MdxNoControllerStaticParse;
 
 struct MdxNoControllerNodeOrigin {
     std::uint32_t objectId = 0;
@@ -319,6 +320,8 @@ private:
     std::vector<std::array<std::uint32_t, 3>> pivotBits_;
     std::uint64_t pivotByteOffset_ = 0;
     friend Result<MdxModel> ParseMdx(std::span<const std::byte>, const MdxLimits&);
+    friend Result<MdxNoControllerStaticParse> ParseMdxNoControllerStaticBudgeted(
+        std::span<const std::byte>, std::size_t, const MdxLimits&);
 };
 
 // 缺少矩阵组的无控制器静态模型，仅供显式“预览近似”入口。
@@ -407,6 +410,20 @@ struct MdxGeosetAlphaRequest {
 
 // 结构越界、版本不是 800、索引/材质/贴图引用无效时整体失败，不发布部分模型。
 [[nodiscard]] Result<MdxModel> ParseMdx(std::span<const std::byte> bytes, const MdxLimits& limits = {});
+
+struct MdxNoControllerStaticParse {
+    MdxModel model;
+    std::size_t chargedPeakBytes = 0;
+};
+
+// 两遍读取：先检查静态域及条目有效存储，再分配模型、临时表和不可伪造来源。
+// maximumResidentBytes 只能收紧128MiB硬上限。计量sizeof有效存储、字符串
+// 原文和明确临时容器，不承诺分配器元数据/系统RSS；借用输入、固定调用栈、
+// 有界错误诊断不计入。成功不复制普通ParseMdx的提示性警告，Compile仍检查资格。
+// 静态caster子集拒绝缺失法线、动态/未知尾部；普通API不变。
+[[nodiscard]] Result<MdxNoControllerStaticParse> ParseMdxNoControllerStaticBudgeted(
+    std::span<const std::byte> bytes, std::size_t maximumResidentBytes,
+    const MdxLimits& limits = {});
 
 // 明确申请无控制器静态预览；不放宽 ParseMdx、不改源文件、不提供保存资格。
 [[nodiscard]] Result<MdxModel> ParseMdxRigidStaticPreview(

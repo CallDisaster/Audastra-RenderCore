@@ -11,8 +11,12 @@
 namespace {
 thread_local bool measuring = false;
 thread_local std::uint64_t allocations = 0;
+thread_local std::uint64_t largestAllocation = 0;
 void* Allocate(std::size_t bytes, std::size_t alignment) {
-    if (measuring) ++allocations;
+    if (measuring) {
+        ++allocations;
+        if (bytes > largestAllocation) largestAllocation = bytes;
+    }
     if (alignment < alignof(void*)) alignment = alignof(void*);
     if (bytes == 0) bytes = 1;
     if (bytes > std::numeric_limits<std::size_t>::max() - alignment - sizeof(void*)) throw std::bad_alloc();
@@ -29,8 +33,9 @@ void Release(void* pointer) noexcept {
 }
 }
 namespace RenderCoreAllocProbe {
-void Begin() noexcept { allocations = 0; measuring = true; }
+void Begin() noexcept { allocations = 0; largestAllocation = 0; measuring = true; }
 std::uint64_t End() noexcept { measuring = false; return allocations; }
+std::uint64_t LargestAllocationBytes() noexcept { return largestAllocation; }
 }
 void* operator new(std::size_t n) { return Allocate(n, alignof(std::max_align_t)); }
 void* operator new[](std::size_t n) { return Allocate(n, alignof(std::max_align_t)); }

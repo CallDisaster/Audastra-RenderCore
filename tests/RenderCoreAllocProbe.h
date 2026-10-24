@@ -6,4 +6,5 @@
 namespace RenderCoreAllocProbe {
 void Begin() noexcept;
 [[nodiscard]] std::uint64_t End() noexcept;
+[[nodiscard]] std::uint64_t LargestAllocationBytes() noexcept;
 }
