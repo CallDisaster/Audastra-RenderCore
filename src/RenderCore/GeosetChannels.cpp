@@ -117,7 +117,16 @@ std::array<float,N> Sample(const GeoChannel<N>& channel,const Sequence& sequence
     if (right==begin) { e.Fail(Code::GeoaBoundaryUnsupported);return {}; }
     const auto& left=*(right-1);
     if (channel.mode==0 || left.frame==time) return left.value;
-    if (right==stop) { e.Fail(Code::GeoaBoundaryUnsupported);return {}; }
+    if (right==stop) {
+        // 1.27a 全局分支 6F789960 + 6F77A720/6F78A1B0：时间过末键时接回首键，负跨度只加当前动作长度，
+        // 跨度为 0 取左键。显式预览按此取值；严格模式仍拒绝该边界。
+        if (!channel.global || e.nodeKeys!=NodeKeySamplingPolicy::SourceOrderPreview) { e.Fail(Code::GeoaBoundaryUnsupported);return {}; }
+        auto span=static_cast<std::int64_t>(begin->frame)-static_cast<std::int64_t>(left.frame);
+        if (span<0) span+=static_cast<std::int64_t>(sequence.end)-static_cast<std::int64_t>(sequence.start);
+        if (span==0) return left.value;
+        return Interpolate(left,*begin,static_cast<double>(static_cast<std::int64_t>(time)-static_cast<std::int64_t>(left.frame))
+            /static_cast<double>(span),channel.mode,e);
+    }
     return Interpolate(left,*right,static_cast<double>(time-left.frame)/(static_cast<double>(right->frame)-left.frame),channel.mode,e);
 }
 }

@@ -224,15 +224,36 @@ void Boundaries() {
         m = SingleTrack(); m.helpers[0].translation->keys[1].value[0] = number;
         Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseNumberInvalid);
     }
+    // 原版 6F1AAC70 建矩阵不归一化，零长度四元数即单位旋转：预览取单位旋转并警告，严格模式仍拒绝。
+    const auto zeroWarned = [](const Sample& sample) {
+        return std::any_of(sample.diagnostics.begin(), sample.diagnostics.end(), [](const auto& d) {
+            return d.code == Code::ZeroRotationPreview && d.objectId == 45 && d.track == TrackKind::Rotation; });
+    };
+    const std::array<float, 4> identity{0, 0, 0, 1};
     m = SingleTrack(); m.helpers[0].rotation = MdxNodeTrack<4>{MdxInterpolation::Linear, UINT32_MAX,
         {{100, {0, 0, 0, 1}, {}, {}}, {500, {}, {}, {}}, {200, {0, 0, 0, 1}, {}, {}}}};
-    Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseRotationInvalid);
+    const auto zeroBetween = Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview);
+    Require(Node(zeroBetween.nodes, 45).rotation == identity && zeroWarned(zeroBetween), "zero rotation segment");
+    m = SingleTrack(); m.helpers[0].translation->keys = {{100, {10, 0, 0}, {}, {}}, {700, {70, 0, 0}, {}, {}}};
+    m.helpers[0].rotation = MdxNodeTrack<4>{MdxInterpolation::None, UINT32_MAX, {{100, {}, {}, {}}}};
+    Compare(m, Request(0, 100), NodeKeySamplingPolicy::Strict, Code::PoseRotationInvalid);
+    const auto zeroKey = Compare(m, Request(0, 100), NodeKeySamplingPolicy::SourceOrderPreview);
+    Require(Node(zeroKey.nodes, 45).rotation == identity && zeroWarned(zeroKey)
+        && Bits(Node(zeroKey.nodes, 45).localMatrix[0], 1.0f), "zero rotation key");
+    m = SingleTrack(); m.helpers[0].rotation = MdxNodeTrack<4>{MdxInterpolation::Linear, UINT32_MAX,
+        {{100, {0, 0, 0, 1}, {}, {}}, {500, {std::numeric_limits<float>::infinity(), 0, 0, 0}, {}, {}}}};
+    Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseNumberInvalid);
     m = SingleTrack(); m.helpers[0].translation->interpolation = static_cast<MdxInterpolation>(99);
     Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseInterpolationUnsupported);
     m = SingleTrack(); m.helpers[0].translation->globalSequence = 99;
     Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseGlobalSequenceInvalid);
+    // 原版全局分支在整条键表上按源序查找（6F77B1E0/6F77B240）：预览按同一规则，严格模式仍拒绝。
+    // 全局时钟 UINT64_MAX%1000=615，归零键 [0,400,100,600] 停在 600，接回首键；负跨度加动作长度 1000。
     m = SingleTrack(); m.globalSequences = {1000}; m.helpers[0].translation->globalSequence = 0;
-    Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseKeysInvalid);
+    Compare(m, Request(0, 300), NodeKeySamplingPolicy::Strict, Code::PoseKeysInvalid);
+    const auto globalOrder = Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview);
+    Require(std::abs(Node(globalOrder.nodes, 45).translation[0] - 67.75f) < 1e-4f
+        && HasWarning(globalOrder, 45, TrackKind::Translation, 500, 200), "global source order preview");
     m = SingleTrack(); m.sequences[0].flags = 7;
     Compare(m, Request(0, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseSequenceUnsupported);
     m = SingleTrack(); Compare(m, Request(99, 300), NodeKeySamplingPolicy::SourceOrderPreview, Code::PoseSequenceInvalid);
@@ -261,7 +282,7 @@ void Budgets() {
     Require(!oldReference.Succeeded() && oldReference.diagnostics.front().code == CodeName(Code::PoseKeysInvalid),
         "old reference no longer strict");
     const auto oldBytes = old.value->StorageBytes(), previewBytes = preview.value->StorageBytes();
-    Require(previewBytes == oldBytes + 3ull * limits.maxNodes * sizeof(PoseDiagnostic), "preview prewarm accounting");
+    Require(previewBytes == oldBytes + 4ull * limits.maxNodes * sizeof(PoseDiagnostic), "preview prewarm accounting");
     limits.maxBytes = oldBytes;
     Require(PoseBatchEvaluator::Create(assets, 101, limits).Succeeded()
         && !Prepared(asset, NodeKeySamplingPolicy::SourceOrderPreview, limits).Succeeded(), "preview bypassed strict budget");

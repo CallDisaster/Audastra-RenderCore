@@ -25,6 +25,7 @@ template <std::size_t N>
 struct Track {
     bool present = false;
     bool global = false;
+    bool globalDescending = false; // 全局轨迹含逆序边：严格模式拒绝，显式预览按原版顺序查找。
     War3Map::Render::MdxInterpolation interpolation = War3Map::Render::MdxInterpolation::None;
     Code error = Code::Ok;
     std::uint32_t period = 0;
@@ -116,6 +117,8 @@ struct Evaluation {
     NodeKeySamplingPolicy nodeKeys = NodeKeySamplingPolicy::Strict;
     // 只在显式原序批次使用；共享所有实例，指向Evaluate栈上的有界计数。
     std::uint64_t* sourceOrderKeyBudget = nullptr;
+    // 显式预览中本次旋转采样遇到零长度四元数；由节点循环汇总为一条警告后清零。
+    bool zeroRotation = false;
     Code failureDiagnostic = Code::Ok;
     std::int64_t failureLeft = 0, failureRight = 0;
     void Fail(Code code) noexcept { if (Good()) error = code; }

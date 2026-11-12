@@ -39,10 +39,21 @@ void CheckFinite(const std::array<float, N>& values) {
         if (!std::isfinite(value)) Fail("MDX_POSE_NUMBER_INVALID", "节点轨迹或矩阵产生非有限数值。");
 }
 
-std::array<float, 4> Normalize(std::array<float, 4> value) {
+// 显式预览的零长度旋转记录；严格模式不传入。
+struct ZeroRotation {
+    bool preview = false;
+    bool hit = false;
+};
+
+std::array<float, 4> Normalize(std::array<float, 4> value, ZeroRotation* zero = nullptr) {
     CheckFinite(value);
     double squared = 0;
     for (const auto component : value) squared += static_cast<double>(component) * component;
+    // 原版建矩阵公式不归一化，零长度四元数即单位矩阵；显式预览按此取单位旋转（与 PoseMath 同规则）。
+    if (zero && zero->preview && std::isfinite(squared) && squared < 1e-20) {
+        zero->hit = true;
+        return {0, 0, 0, 1};
+    }
     if (!std::isfinite(squared) || squared < 1e-20)
         Fail("MDX_POSE_ROTATION_INVALID", "节点四元数长度为零或超出可求值范围。");
     const auto factor = 1.0 / std::sqrt(squared);
@@ -51,9 +62,10 @@ std::array<float, 4> Normalize(std::array<float, 4> value) {
     return value;
 }
 
-std::array<float, 4> Slerp(std::array<float, 4> first, std::array<float, 4> second, double factor) {
-    first = Normalize(first);
-    second = Normalize(second);
+std::array<float, 4> Slerp(std::array<float, 4> first, std::array<float, 4> second, double factor,
+    ZeroRotation* zero = nullptr) {
+    first = Normalize(first, zero);
+    second = Normalize(second, zero);
     double cosine = 0;
     for (std::size_t i = 0; i < 4; ++i) cosine += static_cast<double>(first[i]) * second[i];
     if (cosine < 0) {
@@ -72,21 +84,21 @@ std::array<float, 4> Slerp(std::array<float, 4> first, std::array<float, 4> seco
     std::array<float, 4> result{};
     for (std::size_t i = 0; i < 4; ++i)
         result[i] = static_cast<float>(a * first[i] + b * second[i]);
-    return Normalize(result);
+    return Normalize(result, zero);
 }
 
 std::array<float, 4> Squad(const std::array<float, 4>& first,
     const std::array<float, 4>& outControl, const std::array<float, 4>& inControl,
-    const std::array<float, 4>& second, double factor) {
+    const std::array<float, 4>& second, double factor, ZeroRotation* zero = nullptr) {
     // 通用球面四边形插值：三次 SLERP；此处自行实现，不复制外部代码。
     // 参照 Microsoft XMQuaternionSquad 的四个单位四元数约定：
     // https://learn.microsoft.com/en-us/windows/win32/api/directxmath/nf-directxmath-xmquaternionsquad
     // 以及 gl-matrix 的公开 sqlerp 数学组合：
     // https://github.com/toji/gl-matrix/blob/master/src/quat.js
     // MDX 的 Hermite/Bezier 切线如何对应原版曲线尚未验证，故仅用于预览。
-    const auto endpoints = Slerp(first, second, factor);
-    const auto controls = Slerp(outControl, inControl, factor);
-    return Slerp(endpoints, controls, 2.0 * factor * (1.0 - factor));
+    const auto endpoints = Slerp(first, second, factor, zero);
+    const auto controls = Slerp(outControl, inControl, factor, zero);
+    return Slerp(endpoints, controls, 2.0 * factor * (1.0 - factor), zero);
 }
 
 void PreviewWarning(std::vector<Diagnostic>& warnings, const char* code, std::string message) {
@@ -103,7 +115,8 @@ template <std::size_t N>
 std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxNodeTrack<N>>& optional,
     std::array<float, N> fallback, const MdxSequence& sequence, std::uint32_t sequenceFrame,
     std::uint64_t globalElapsedMs, std::uint32_t objectId, const char* trackName,
-    std::vector<Diagnostic>& warnings, War3RenderCore::NodeKeySamplingPolicy nodeKeys) {
+    std::vector<Diagnostic>& warnings, War3RenderCore::NodeKeySamplingPolicy nodeKeys,
+    ZeroRotation* zero = nullptr) {
     if (!optional) return fallback;
     const auto& track = *optional;
     if (track.interpolation != MdxInterpolation::None && track.interpolation != MdxInterpolation::Linear
@@ -126,12 +139,9 @@ std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxN
     const bool global = track.globalSequence != UINT32_MAX;
     std::size_t rangeFirst = 0, rangeCount = track.keys.size();
     if (global) {
-        std::int64_t previous = std::numeric_limits<std::int64_t>::min();
         for (const auto& key : track.keys) {
-            if (key.frame < previous)
-                Fail("MDX_POSE_KEYS_INVALID", "全局轨迹含逆序帧；原版全局时钟按升序键查找，未支持逆序。");
-            previous = key.frame;
-            if (static_cast<std::int64_t>(key.frame) - track.keys.front().frame > INT32_MAX)
+            const auto span = static_cast<std::int64_t>(key.frame) - track.keys.front().frame;
+            if (span > INT32_MAX || span < INT32_MIN)
                 Fail("MDX_POSE_GLOBAL_SPAN_UNSUPPORTED", "全局轨迹归零后的帧跨度超出已确认的有符号范围。");
         }
     } else {
@@ -144,18 +154,22 @@ std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxN
             });
     }
     std::int64_t reverseLeft = 0, reverseRight = 0;
-    const bool sourceOrder = !global && War3RenderCore::Detail::FirstDescendingEdge(
+    // 全局轨迹的区间是整条键表（原版 6F77B1E0/6F77B240 在全表上按源序线性查找）。
+    const bool sourceOrder = War3RenderCore::Detail::FirstDescendingEdge(
         track.keys, rangeFirst, rangeCount, reverseLeft, reverseRight);
     if (sourceOrder && nodeKeys != War3RenderCore::NodeKeySamplingPolicy::SourceOrderPreview)
-        Fail("MDX_POSE_KEYS_INVALID", "本次动作的节点按键区间含逆序帧；严格模式不接受，世界预览按原版顺序查找。");
+        Fail("MDX_POSE_KEYS_INVALID", global ? "全局轨迹含逆序帧；严格模式不接受，世界预览按原版顺序查找。"
+            : "本次动作的节点按键区间含逆序帧；严格模式不接受，世界预览按原版顺序查找。");
     for (std::size_t i = rangeFirst; i < rangeFirst + rangeCount; ++i) keys.push_back(&track.keys[i]);
     const MdxNodeKey<N>* leftKey = nullptr;
     const MdxNodeKey<N>* rightKey = nullptr;
     std::int64_t delta = 0, interval = 0;
     bool outside = false;
     if (sourceOrder) {
+        // 全局键保持源帧：首键前按“周期末”重查，即源帧空间的 period + 首键帧。
+        const auto origin = global ? static_cast<std::int64_t>(track.keys.front().frame) : 0;
         const auto window = War3RenderCore::Detail::SelectGameKeyWindow(
-            track.keys, rangeFirst, rangeCount, time.start, time.end, time.frame);
+            track.keys, rangeFirst, rangeCount, time.start + origin, time.end + origin, time.frame);
         PreviewWarning(warnings, "MDX_POSE_SOURCE_ORDER_PREVIEW",
             War3RenderCore::Detail::DescribeSourceOrderNodePreview(trackName, objectId, reverseLeft, reverseRight));
         if (window.kind == War3RenderCore::Detail::SourceOrderWindowKind::Empty) return fallback;
@@ -165,6 +179,11 @@ std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxN
         }
         leftKey = &track.keys[window.left]; rightKey = &track.keys[window.right];
         delta = window.offset; interval = window.span; outside = window.seam;
+        if (global) {
+            // 原版全局分支的负跨度同样只加当前动作长度，而不是全局周期。
+            interval = static_cast<std::int64_t>(rightKey->frame) - leftKey->frame;
+            if (interval < 0) interval += static_cast<std::int64_t>(sequence.end) - sequence.start;
+        }
     } else {
         if (keys.empty()) return fallback;
         if (keys.size() == 1) { CheckFinite(keys.front()->value); return keys.front()->value; }
@@ -194,7 +213,7 @@ std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxN
     const auto factor = static_cast<double>(delta) / static_cast<double>(interval);
     if constexpr (N == 4) {
         if (track.interpolation == MdxInterpolation::Linear)
-            return Slerp(left.value, right.value, factor);
+            return Slerp(left.value, right.value, factor, zero);
         PreviewWarning(warnings, "MDX_POSE_GENERIC_ROTATION_PREVIEW", std::string(trackName) + " objectId="
             + std::to_string(objectId) + " 在 " + std::to_string(left.frame) + ".."
             + std::to_string(right.frame) + " 帧之间使用通用四元数 squad 预览，非原版等价证明。");
@@ -209,9 +228,9 @@ std::array<float, N> SampleTrack(const MdxModel& model, const std::optional<MdxN
         if (!validControl(left.outTangent) || !validControl(right.inTangent)) {
             PreviewWarning(warnings, "MDX_POSE_ROTATION_CONTROL_FALLBACK", std::string(trackName) + " objectId="
                 + std::to_string(objectId) + " 的曲线控制四元数无效；仅该段退为端点球面插值预览。");
-            return Slerp(left.value, right.value, factor);
+            return Slerp(left.value, right.value, factor, zero);
         }
-        return Squad(left.value, left.outTangent, right.inTangent, right.value, factor);
+        return Squad(left.value, left.outTangent, right.inTangent, right.value, factor, zero);
     } else {
         std::array<float, N> result{};
         const auto u = 1.0 - factor;
@@ -483,8 +502,12 @@ MdxPoseSample Sample(const MdxModel& model, const MdxPoseRequest& request,
         }
         node.translation = SampleTrack(model, source.translation, node.translation, sequence, frame,
             request.globalElapsedMs, source.objectId, "KGTR", warnings, nodeKeys);
+        ZeroRotation zero{nodeKeys == War3RenderCore::NodeKeySamplingPolicy::SourceOrderPreview};
         node.rotation = Normalize(SampleTrack(model, source.rotation, node.rotation, sequence, frame,
-            request.globalElapsedMs, source.objectId, "KGRT", warnings, nodeKeys));
+            request.globalElapsedMs, source.objectId, "KGRT", warnings, nodeKeys, &zero), &zero);
+        if (zero.hit)
+            PreviewWarning(warnings, "MDX_POSE_ZERO_ROTATION_PREVIEW", "KGRT objectId=" + std::to_string(source.objectId)
+                + " 含零长度四元数；按原版建矩阵公式取单位旋转，键间插值为预览实现。");
         node.scaling = SampleTrack(model, source.scaling, node.scaling, sequence, frame,
             request.globalElapsedMs, source.objectId, "KGSC", warnings, nodeKeys);
         node.localMatrix = LocalMatrix(node);

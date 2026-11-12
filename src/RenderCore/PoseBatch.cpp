@@ -321,8 +321,8 @@ War3Map::Result<PoseBatchEvaluator> PoseBatchEvaluator::Create(
         return failure(Code::RequestInvalid);
     auto result = Create(assets, evaluationEpoch, limits, policy, materials, textures, textureAssets);
     if (!result.Succeeded() || nodeKeys == NodeKeySamplingPolicy::Strict) return result;
-    const auto count = 7ull * limits.maxNodes + limits.maxInstances;
-    const auto extraBytes = 3ull * limits.maxNodes * sizeof(PoseDiagnostic);
+    const auto count = 8ull * limits.maxNodes + limits.maxInstances;
+    const auto extraBytes = 4ull * limits.maxNodes * sizeof(PoseDiagnostic);
     if (count > UINT32_MAX || result.value->StorageBytes() > limits.maxBytes
         || extraBytes > limits.maxBytes - result.value->StorageBytes())
         return failure(Code::CapacityExceeded);
@@ -422,10 +422,10 @@ BatchOutcome PoseBatchEvaluator::Evaluate(std::span<const PoseRequest> requests,
         if (materials_) { materials_->ranges[i] = {}; materials_->issues[i] = {}; }
         if (textures_) { textures_->ranges[i] = {}; textures_->issues[i] = {}; }
         if (materialAlphaPreview_) materialAlphaPreview_->ranges[i] = {};
-        // 源序预览最多另加每TRS通道一条；旧严格入口容量公式不变。
+        // 源序预览最多另加每TRS通道一条及零长度旋转一条；旧严格入口容量公式不变。
         const auto materialWarnings = asset && materialAlphaKeys_ == MaterialAlphaKeySamplingPolicy::IdenticalDuplicatesPreview
             ? ModelAccess::Get(*asset)->materialDuplicateWarnings : 0;
-        const auto diagnosticCapacity = (nodeKeys_ == NodeKeySamplingPolicy::SourceOrderPreview ? 7u : 4u) * nodeCount
+        const auto diagnosticCapacity = (nodeKeys_ == NodeKeySamplingPolicy::SourceOrderPreview ? 8u : 4u) * nodeCount
             + 1 + materialWarnings;
         std::uint32_t materialWarningCount = 0;
         const auto materialWarningStorage = materialAlphaPreview_

@@ -30,7 +30,10 @@ template <std::size_t N>
 Track<N> CompileUvTrack(const std::optional<War3Map::Render::MdxNodeTrack<N>>& source,
     const War3Map::Render::MdxModel& model, TrackBudget& budget) {
     if (source) budget.Charge(source->keys.size(), sizeof(Key<N>));
-    return CompileTrack(source, model.globalSequences, model.sequences, budget);
+    auto track = CompileTrack(source, model.globalSequences, model.sequences, budget);
+    // TXAN 与策略无关地编译一次：全局逆序维持原来的编译期拒绝（该 TXAN 保持静态坐标），不进入节点预览查找。
+    if (track.globalDescending && track.error == Code::Ok) { track.error = Code::PoseKeysInvalid; track.keys.clear(); }
+    return track;
 }
 bool HasKeys(const auto& track) noexcept { return track.present && !track.keys.empty(); }
 // 原版 6F77C730：从单位阵起，KTAR、KTAS、KTAT 依次左乘（行向量约定，辅助函数 6F1AB2D0/6F1AAC70 均为左乘），

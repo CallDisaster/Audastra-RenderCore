@@ -43,7 +43,8 @@ Code Compare(const MdxModel& model,std::uint64_t time,std::uint64_t global,std::
     const auto code=evaluator.Receipts()[0].error;
     // 参考实现按原版取值；只有严格模式会对当前动作区间内的逆序键另行拒绝。
     Check(error==(code==Code::Ok ? "" : CodeName(code)) ||
-        (keys==NodeKeySamplingPolicy::Strict && code==Code::GeoaKeysInvalid && error.empty()),"通道拒绝码差分");
+        (keys==NodeKeySamplingPolicy::Strict && (code==Code::GeoaKeysInvalid || code==Code::GeoaBoundaryUnsupported)
+            && error.empty()),"通道拒绝码差分");
     if (code!=Code::Ok) Check(evaluator.Colors(0).empty() && evaluator.Alphas(0).empty(),"失败泄漏部分颜色");
     return code;
 }
@@ -90,6 +91,19 @@ void Run() {
     constant.alphaKeys.back().value=0.75f;constant.colorKeys.back().value={1,0.25f,0};
     Check(Compare(zero,500,50)==Code::Ok && *SampleMdxGeosetAlpha(zero,{1,0,500,50}).value==0.375f &&
         *SampleMdxGeosetColor(zero,{1,0,500,50}).value==Vec3{0.25f,0.25f,0.75f},"归零后周期外右键插值错误");
+    // 全局时间过末键（Electric Spark 类型）：原版接回首键，负跨度加当前动作长度。周期 400，归零键 0→0.25、200→0.75；
+    // 全局时钟 300 落在末键之后：跨度 0-200+动作长度，比例 100/跨度。严格模式仍拒绝，显式预览与参考实现按原版取值。
+    auto seam=zero;seam.globalSequences[0]=400;
+    auto& seamTrack=*seam.geosets[1].animation;seamTrack.alphaKeys.back().frame=533;seamTrack.alphaKeys.back().value=0.75f;
+    seamTrack.colorKeys.back().frame=533;
+    Check(Compare(seam,500,300)==Code::GeoaBoundaryUnsupported,"全局末键后严格模式未拒绝");
+    Check(Compare(seam,500,300,0,NodeKeySamplingPolicy::SourceOrderPreview)==Code::Ok,"全局末键后预览未接回首键");
+    {
+        const auto& stand=seam.sequences[0];
+        const double span=-200.0+(static_cast<double>(stand.end)-stand.start);
+        const auto expected=static_cast<float>((1.0-100.0/span)*0.75+(100.0/span)*0.25);
+        Check(*SampleMdxGeosetAlpha(seam,{1,0,500,300}).value==expected,"全局末键接回首键的取值错误");
+    }
     constant.colorKeys.back().frame=UINT32_MAX;Check(Compare(zero,500,0)==Code::GeoaGlobalSpanUnsupported,"全局帧跨度溢出未拒绝");
     // Necropolis 类型：整条轨迹有多个动作的键，但当前动作只有末端一键。
     for (auto mode:{0u,1u,2u,3u}) {

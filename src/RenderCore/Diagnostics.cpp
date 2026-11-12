@@ -94,6 +94,7 @@ DiagnosticText Text(Code code) noexcept {
     case Code::MaterialTextureLimit: return {"MDX_MATERIAL_TEXTURE_LIMIT", "KMTF拥有轨迹/可达贴图/布局超过有界预算。"};
     case Code::NodeSourceOrderPreview: return {"MDX_POSE_SOURCE_ORDER_PREVIEW", "节点轨迹本动作区间含逆序源键；按 1.27a 原版区间与顺序查找取值。"};
     case Code::NodeSourceOrderKeyLimit: return {"RENDER_CORE_SOURCE_ORDER_KEY_LIMIT", "显式原序预览超过每批1048576次按键访问的硬上限；该实例按CapacityExceeded拒绝。"};
+    case Code::ZeroRotationPreview: return {"MDX_POSE_ZERO_ROTATION_PREVIEW", "旋转键含零长度四元数；按 1.27a 建矩阵公式取单位旋转（键间插值为预览实现）。"};
     }
     return {"RENDER_CORE_UNKNOWN_DIAGNOSTIC", "未知诊断编号。"};
 }
@@ -119,6 +120,8 @@ std::string DescribeDiagnostic(const PoseDiagnostic& diagnostic) {
             + std::to_string(diagnostic.rightFrame) + " 帧之间使用通用四元数 squad 预览，非原版等价证明。";
     case Code::RotationControlFallback:
         return std::string(track) + " " + object + " 的曲线控制四元数无效；仅该段退为端点球面插值预览。";
+    case Code::ZeroRotationPreview:
+        return std::string("KGRT ") + object + " 含零长度四元数；按原版建矩阵公式取单位旋转，键间插值为预览实现。";
     case Code::GenericCameraPreview:
         return object + " 使用有界相机朝向通用算法预览，非原版等价证明。";
     case Code::CameraStaticPreview:

@@ -29,7 +29,30 @@ std::array<float, N> SampleTrack(const Track<N>& track, std::array<float, N> fal
     bool seam = false;
     const bool ranged = !track.global && !track.sequenceKeys.empty();
     const auto range = ranged ? track.sequenceKeys[sequenceIndex] : Range32{};
-    if (ranged && track.sequenceDescending[sequenceIndex] != 0) {
+    if (track.global && track.globalDescending) {
+        // 1.27a 全局分支（6F77AAD0/6F77AE30 + 6F77B1E0/6F77B240）：整条键表按源序线性查找，
+        // 首键前改按周期末查找；负跨度只加当前动作长度（与下方单调全局分支同一原版写法）。
+        if (e.nodeKeys != NodeKeySamplingPolicy::SourceOrderPreview) { e.Fail(Code::PoseKeysInvalid); return fallback; }
+        const auto count = static_cast<std::uint64_t>(track.keys.size());
+        const auto remaining = e.sourceOrderKeyBudget ? *e.sourceOrderKeyBudget : 0;
+        if (!e.sourceOrderKeyBudget || count > remaining) {
+            e.failureDiagnostic = Code::NodeSourceOrderKeyLimit;
+            e.failureLeft = static_cast<std::int64_t>(count);
+            e.failureRight = static_cast<std::int64_t>(remaining);
+            e.Fail(Code::CapacityExceeded); return fallback;
+        }
+        *e.sourceOrderKeyBudget -= count;
+        std::int64_t reverseLeft = 0, reverseRight = 0;
+        (void)FirstDescendingEdge(track.keys, 0, track.keys.size(), reverseLeft, reverseRight);
+        e.Warn(Code::NodeSourceOrderPreview, reverseLeft + track.origin, reverseRight + track.origin);
+        const auto window = SelectGameKeyWindow(track.keys, 0, track.keys.size(), beginTime, endTime, time);
+        if (!e.Good() || window.kind == SourceOrderWindowKind::Empty) return fallback;
+        if (window.kind == SourceOrderWindowKind::Value) return keyValue(track.keys[window.left]);
+        leftKey = &track.keys[window.left]; rightKey = &track.keys[window.right];
+        offset = window.offset; seam = window.seam;
+        span = static_cast<std::int64_t>(rightKey->frame) - leftKey->frame;
+        if (span < 0) span += static_cast<std::int64_t>(sequence.end) - sequence.start;
+    } else if (ranged && track.sequenceDescending[sequenceIndex] != 0) {
         // 区间内含逆序边：严格模式拒绝；显式原序预览按原版顺序查找（扫描次数受批次预算限制）。
         if (e.nodeKeys != NodeKeySamplingPolicy::SourceOrderPreview) { e.Fail(Code::PoseKeysInvalid); return fallback; }
         const auto remaining = e.sourceOrderKeyBudget ? *e.sourceOrderKeyBudget : 0;
@@ -156,6 +179,8 @@ bool EvaluateComputed(const ModelData& model, const PoseRequest& request, std::u
         if (!e.Good()) return false;
         e.track = TrackKind::Rotation;
         node.rotation = Normalize(SampleTrack(source.rotation, node.rotation, sequence, request.sequenceIndex, frame, request.globalElapsedMs, e), e);
+        if (!e.Good()) return false;
+        if (e.zeroRotation) { e.zeroRotation = false; e.Warn(Code::ZeroRotationPreview); }
         if (!e.Good()) return false;
         e.track = TrackKind::Scale;
         node.scaling = SampleTrack(source.scaling, node.scaling, sequence, request.sequenceIndex, frame, request.globalElapsedMs, e);

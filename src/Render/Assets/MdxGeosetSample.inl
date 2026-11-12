@@ -102,7 +102,15 @@ Result<std::array<float,N>> SampleGeoReference(const MdxModel& model, const MdxG
     if (!isGlobal && spanCount == 1) return constant(*soleKey); // 普通单键与原版未抑制更新路径一样为常量
     if (!left) return reject("MDX_GEOA_BOUNDARY_UNSUPPORTED");
     if (mode==0 || left->frame==time) return constant(*left);
-    if (!right) return reject("MDX_GEOA_BOUNDARY_UNSUPPORTED");
+    if (!right) {
+        // 1.27a 全局分支 6F789960 + 6F77A720/6F78A1B0：时间过末键时接回首键，负跨度只加当前动作长度，跨度为 0 取左键。
+        // 参考实现按原版取值；编译侧严格模式仍拒绝，显式预览与此相同。
+        auto span=static_cast<std::int64_t>(keys.front().frame)-static_cast<std::int64_t>(left->frame);
+        if (span<0) span+=static_cast<std::int64_t>(sequence.end)-static_cast<std::int64_t>(sequence.start);
+        if (span==0) return constant(*left);
+        return curve(*left, keys.front(), static_cast<double>(static_cast<std::int64_t>(time)-static_cast<std::int64_t>(left->frame))
+            /static_cast<double>(span));
+    }
     return curve(*left, *right, static_cast<double>(time-left->frame)/(static_cast<double>(right->frame)-left->frame));
 }
 }

@@ -78,16 +78,12 @@ Track<N> CompileTrack(const std::optional<MdxNodeTrack<N>>& source,
     if (track.global && !source->keys.empty()) track.origin = source->keys.front().frame;
     std::int64_t previous = std::numeric_limits<std::int64_t>::min();
     for (const auto& key : source->keys) {
-        if (key.frame < previous) {
-            if (track.global) {
-                track.error = Code::PoseKeysInvalid;
-                track.keys.clear();
-                return track;
-            }
-        }
+        // 1.27a 全局轨迹（6F77AAD0/6F77AE30 的全局分支）在整条键表上按源序线性查找，不排序；
+        // 逆序只标记，严格采样仍按 PoseKeysInvalid 拒绝，显式预览由 PoseTracks 走同一查找规则。
+        if (key.frame < previous && track.global) track.globalDescending = true;
         previous = key.frame;
         const auto frame = static_cast<std::int64_t>(key.frame) - track.origin;
-        if (track.global && frame > INT32_MAX) {
+        if (track.global && (frame > INT32_MAX || frame < INT32_MIN)) {
             track.error = Code::PoseGlobalSpanUnsupported;
             track.keys.clear();
             return track;

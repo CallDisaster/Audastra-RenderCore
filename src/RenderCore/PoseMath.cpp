@@ -11,6 +11,12 @@ Quaternion Normalize(Quaternion value, Evaluation& e) noexcept {
     if (!CheckFinite(value, e)) return {};
     double squared = 0;
     for (const auto component : value) squared += static_cast<double>(component) * component;
+    // 1.27a 6F1AAC70 直接按 1-2(yy+zz) 等二次式由四元数建矩阵、不归一化，零长度即单位矩阵；
+    // 6F883CA0 球面插值也不先归一化端点。显式预览按此取单位旋转并汇总警告，严格模式仍拒绝。
+    if (std::isfinite(squared) && squared < 1e-20 && e.nodeKeys == NodeKeySamplingPolicy::SourceOrderPreview) {
+        e.zeroRotation = true;
+        return {0, 0, 0, 1};
+    }
     if (!std::isfinite(squared) || squared < 1e-20) { e.Fail(Code::PoseRotationInvalid); return {}; }
     const auto factor = 1.0 / std::sqrt(squared);
     for (auto& component : value) component = static_cast<float>(component * factor);
