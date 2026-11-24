@@ -75,8 +75,9 @@ struct War3RenderTextureRgbaV2 {
     const void* rgba; // 紧密行优先 RGBA8，顶行先存；调用期间深拷贝。
 };
 constexpr std::uint32_t WAR3_RENDER_HEIGHT_COLOR_TEXTURE = UINT32_MAX;
-// 贴图批次可按位或此标志：该批次采样贴图 alpha 并混合到之前批次之上（地表过渡层）。
-// 未带标志的批次忽略 alpha、按不透明绘制。高度色哨兵不能带标志。
+// 贴图批次可按位或此标志，标记地表过渡层（叠在基础层之上），供宿主与校验区分层次。
+// 与游戏一致，所有带贴图的批次（基础层与过渡层）都按贴图 alpha 混合到之前绘制的内容上，
+// alpha 为 0 的像素不写颜色也不写深度。高度色哨兵不能带标志，按不透明绘制。
 constexpr std::uint32_t WAR3_RENDER_TERRAIN_ALPHA_BLEND = 0x80000000u;
 // 半透明批次（水面）：按贴图 alpha 混合，但在不透明模型之后绘制、只做深度测试不写深度，
 // 使水下的模型（悬崖底座、水中装饰物）透过水面可见。可单独使用，也可与上一标志同时出现。
@@ -129,12 +130,15 @@ struct War3RenderTerrainMipSceneV2 {
 struct War3RenderModelVertexV2 { float x, y, z, nx, ny, nz, u, v; };
 constexpr std::uint32_t WAR3_RENDER_MODEL_NO_TEXTURE = UINT32_MAX;
 // filterMode 同 MDX：0 不透明、1 透明测试(alpha≥0.75)、2 混合、3 叠加、4 叠加 alpha、5 调制、6 双倍调制。
-// flags：1 无光照、2 不受雾影响、4 不写深度；可组合，未知位拒绝。模型均按双面绘制。
+// flags：1 无光照、2 不受雾影响、4 不写深度、8 剔除背面；可组合，未知位拒绝。
+// 未置 8 的层双面绘制。置 8 时剔除背面：正面为模型→世界变换后从法线一侧看去逆时针
+// （右手、Z 向上），与 MDX 非双面层在游戏里的剔除方向一致。
 constexpr std::uint32_t WAR3_RENDER_MODEL_UNSHADED = 1;
 constexpr std::uint32_t WAR3_RENDER_MODEL_UNFOGGED = 2;
 constexpr std::uint32_t WAR3_RENDER_MODEL_NO_DEPTH_WRITE = 4;
+constexpr std::uint32_t WAR3_RENDER_MODEL_CULL_BACK = 8;
 constexpr std::uint32_t WAR3_RENDER_MODEL_LAYER_FLAGS = WAR3_RENDER_MODEL_UNSHADED
-    | WAR3_RENDER_MODEL_UNFOGGED | WAR3_RENDER_MODEL_NO_DEPTH_WRITE;
+    | WAR3_RENDER_MODEL_UNFOGGED | WAR3_RENDER_MODEL_NO_DEPTH_WRITE | WAR3_RENDER_MODEL_CULL_BACK;
 struct War3RenderModelLayerV2 { std::uint32_t textureIndex, filterMode, flags; float alpha; };
 // indices 为 16 位；baseVertex 为该网格首顶点在 vertices 中的位置。
 struct War3RenderModelMeshV2 { std::uint32_t firstIndex, indexCount, baseVertex, firstLayer, layerCount; };

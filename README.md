@@ -3,7 +3,7 @@
 
 # Audastra RenderCore
 
-Audastra 地图编辑器与 WarVK 共用的经典版 Warcraft III（1.27a）模型渲染核心，当前版本 0.1.21（工程内部名 War3RenderCore）。
+Audastra 地图编辑器与 WarVK 共用的经典版 Warcraft III（1.27a）模型渲染核心，当前版本 0.1.22（工程内部名 War3RenderCore）。
 内容：经典 MDX 有界解析、冻结姿态参考、预热 CPU 批量求值、插件输入可移植校验与原创测试。
 只依赖 C++20 编译器和标准库，不包含 Qt、设备、GPU 后端、MPQ 读取或游戏安装逻辑。
 浮点选项为 MSVC `/fp:precise`、其他编译器 `-ffp-contract=off`。
@@ -55,6 +55,11 @@ FORGE 配置及实际消费者构建都拒绝未提交的共享修改；不要�
 逐位相同的轨迹生效，不改变源键序。成功警告通过独立有界视图提供材质层及原键偏移，
 默认 PoseDiagnostic 仍为32字节。PREM 读取不代表子模型已经发射或 GPU 绘制。
 接口和边界见 `docs/KMTA_PREM_PREVIEW.md`；候选验证回执由消费者记录。
+
+0.1.22 为模型层新增 `WAR3_RENDER_MODEL_CULL_BACK`（8）：MDX 非双面层在游戏里剔除背面，
+消费者据此选择背面剔除光栅状态；未置位的层仍双面绘制。地表批次的约定改为与游戏一致：
+基础层也按贴图 alpha 混合，alpha 为 0 的像素不写颜色和深度；`WAR3_RENDER_TERRAIN_ALPHA_BLEND`
+只标记过渡层。结构体布局不变。
 
 0.1.21 在显式原序预览中按 1.27a 反汇编补齐三处取值：零长度旋转四元数取单位旋转（原版建矩阵不归一化）、
 全局轨迹逆序键按整表源序查找、GEOA/KMTA 全局时间过末键时接回首键。严格模式拒绝码不变。

@@ -118,7 +118,7 @@ void RejectedPreservation() {
     fixture.meshes[0].baseVertex = 3; reject(valid.base); fixture.meshes[0].baseVertex = 0;
     fixture.model.firstMesh = UINT32_MAX; reject(valid.base); fixture.model.firstMesh = 0;
     fixture.instance.model = 1; reject(valid.base); fixture.instance.model = 0;
-    fixture.layers[0].flags = 8; reject(valid.base); fixture.layers[0].flags = 1;
+    fixture.layers[0].flags = 16; reject(valid.base); fixture.layers[0].flags = 1;
     fixture.layers[0].textureIndex = 0; reject(valid.base); fixture.layers[0].textureIndex = WAR3_RENDER_MODEL_NO_TEXTURE;
     fixture.layers[0].alpha = std::numeric_limits<float>::quiet_NaN(); reject(valid.base); fixture.layers[0].alpha = 1;
     fixture.vertices[0].u = std::numeric_limits<float>::infinity(); reject(valid.base); fixture.vertices[0].u = 0;

@@ -13,7 +13,8 @@ namespace {
 void Check(bool ok) { if (!ok) throw std::runtime_error("蒙皮输入校验失败"); }
 void LayerFlags() {
     static_assert(WAR3_RENDER_MODEL_UNSHADED == 1 && WAR3_RENDER_MODEL_UNFOGGED == 2
-        && WAR3_RENDER_MODEL_NO_DEPTH_WRITE == 4 && WAR3_RENDER_MODEL_LAYER_FLAGS == 7);
+        && WAR3_RENDER_MODEL_NO_DEPTH_WRITE == 4 && WAR3_RENDER_MODEL_CULL_BACK == 8
+        && WAR3_RENDER_MODEL_LAYER_FLAGS == 15);
     static_assert(sizeof(War3RenderModelLayerV2) == 16 && offsetof(War3RenderModelLayerV2, alpha) == 12);
     RenderSkinFixture fixture; auto update = fixture.Update(); const auto description = fixture.Scene(update);
     for (std::uint32_t flags = 0; flags <= WAR3_RENDER_MODEL_LAYER_FLAGS; ++flags) {
@@ -21,7 +22,7 @@ void LayerFlags() {
         Check(CopySkinnedModelInput(description, scene, bytes) && scene.layers[0].flags == flags);
         Check(ValidateModelGeometry(scene, 0));
     }
-    for (const auto flags : {8u, 0x80000000u, UINT32_MAX}) {
+    for (const auto flags : {16u, 0x80000000u, UINT32_MAX}) {
         fixture.layer.flags = flags; ModelScene scene; std::uint64_t bytes = 0;
         Check(!CopySkinnedModelInput(description, scene, bytes));
         scene.layers.push_back(fixture.layer); Check(!ValidateModelGeometry(scene, 0));

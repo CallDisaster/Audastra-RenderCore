@@ -51,7 +51,7 @@ int main() try {
             && candidate.initialSkin == baseline && unchanged == 991, "rejection retains output and payload");
     };
     ++append.prefix.vertexCount; rejected(); --append.prefix.vertexCount;
-    fixture.layer.flags = 8; rejected();
+    fixture.layer.flags = 16; rejected();
     for (const auto flags : {WAR3_RENDER_MODEL_UNFOGGED, WAR3_RENDER_MODEL_LAYER_FLAGS}) {
         fixture.layer.flags = flags; ModelScene flagsCandidate; std::uint64_t flagsBytes = 0;
         Check(CopySkinAssetAppend(append, colored.base, resident, flagsCandidate, flagsBytes),
