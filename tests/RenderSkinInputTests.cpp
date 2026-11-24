@@ -5,8 +5,10 @@
 #include "War3RenderCore/Legacy/RenderPluginModelLayers.h"
 #include "War3RenderCore/Legacy/RenderPluginFrameMetrics.h"
 #include "../src/Render/Scene/ModelSkinInput.h"
+#include <cstring>
 #include <iostream>
 #include <limits>
+#include <span>
 #include <stdexcept>
 using namespace War3Map::Render;
 namespace {
@@ -28,10 +30,81 @@ void LayerFlags() {
         scene.layers.push_back(fixture.layer); Check(!ValidateModelGeometry(scene, 0));
     }
 }
+bool SamePose(const SkinPose& a, const SkinPose& b) {
+    const auto bytes = [](const auto& x, const auto& y) {
+        return x.size() == y.size() && (x.empty() || std::memcmp(x.data(), y.data(), x.size() * sizeof(x[0])) == 0);
+    };
+    return a.sceneVersion == b.sceneVersion && a.contentVersion == b.contentVersion && a.matrixFormat == b.matrixFormat
+        && bytes(a.instances, b.instances) && bytes(a.groups, b.groups) && bytes(a.alphas, b.alphas) && bytes(a.colors, b.colors)
+        && bytes(a.layerAlphas, b.layerAlphas) && bytes(a.layerSlices, b.layerSlices) && a.dynamicMaterialAlphas == b.dynamicMaterialAlphas
+        && bytes(a.materialStates, b.materialStates) && bytes(a.materialStateSlices, b.materialStateSlices)
+        && a.dynamicMaterialStates == b.dynamicMaterialStates;
+}
+// 按实例增量复制：结果与整份复制逐字节相同；任一拒绝都不改动旧副本。
+void InstanceDelta() {
+    constexpr auto nan = std::numeric_limits<float>::quiet_NaN();
+    RenderSkinFixture fixture; auto update = fixture.Update(2); const auto description = fixture.Scene(update);
+    ModelScene scene; std::uint64_t bytes = 0; Check(CopySkinnedModelInput(description, scene, bytes));
+    SkinPose base; Check(CopySkinUpdate(update, scene, base));
+    fixture.groups[1].values[9] = 250; fixture.alphas[1] = .5f; fixture.instances[1].instance.color[2] = .25f;
+    update.contentVersion = 3;
+    SkinPose full; Check(CopySkinUpdate(update, scene, full));
+    const std::uint32_t one[]{1}, both[]{0, 1}, reversed[]{1, 0}, twice[]{1, 1}, outside[]{2};
+    auto delta = base; Check(CopySkinUpdateInstances(update, scene, one, delta) && SamePose(delta, full));
+    delta = base; Check(CopySkinUpdateInstances(update, scene, both, delta) && SamePose(delta, full));
+    auto unchanged = base; Check(CopySkinUpdateInstances(update, scene, {}, unchanged) && unchanged.contentVersion == 3
+        && unchanged.groups[1].values[9] == 500);
+    const auto reject = [&](const War3RenderSkinUpdateV2& input, std::span<const std::uint32_t> list) {
+        auto copy = base; Check(!CopySkinUpdateInstances(input, scene, list, copy) && SamePose(copy, base));
+    };
+    reject(update, reversed); reject(update, twice); reject(update, outside);
+    auto stale = update; stale.contentVersion = 2; reject(stale, one);
+    auto otherScene = update; otherScene.sceneVersion = 2; reject(otherScene, one);
+    auto sharedFormat = update; sharedFormat.matrixFormat = WAR3_RENDER_GROUP_LOCAL_COLUMN_3X4_SHARED_RANGES; reject(sharedFormat, one);
+    auto shorter = update; shorter.groupCount = 1; reject(shorter, one);
+    fixture.groups[1].values[0] = nan; reject(update, both); fixture.groups[1].values[0] = 1; // 第二个实例失败也不留半份
+    fixture.alphas[1] = std::numeric_limits<float>::infinity(); reject(update, one); fixture.alphas[1] = .5f;
+    fixture.instances[1].instance.color[0] = 2; reject(update, one); fixture.instances[1].instance.color[0] = 0;
+    fixture.instances[1].instance.transform[3] = 2.0e7f; reject(update, one); fixture.instances[1].instance.transform[3] = 0;
+    fixture.instances[1].firstGroup = 0; reject(update, one); fixture.instances[1].firstGroup = 1;
+    // 未列出实例按合同不读取：它的非法新值既不拒绝也不写入。
+    fixture.groups[0].values[0] = nan; auto partial = base;
+    Check(CopySkinUpdateInstances(update, scene, one, partial) && partial.groups[0].values[0] == 1); fixture.groups[0].values[0] = 1;
+    // 材质透明度与材质状态片段只按原位置复制，位置变化或数值越界都拒绝。
+    RenderSkinFixture stateFixture; War3RenderMaterialStateSkinUpdateV2 states{};
+    float layerAlphas[]{1, .5f}; War3RenderMaterialLayerSliceV2 layerSlices[]{{0, 1}, {1, 1}};
+    War3RenderMaterialStateV2 stateValues[]{{0, 0, {1, 0, 0, 0, 1, 0}}, {1, 3, {0, .5f, .125f, .25f, 0, .625f}}};
+    War3RenderMaterialLayerSliceV2 stateSlices[]{{0, 1}, {1, 1}};
+    auto& stateUpdate = states.base.base.base;
+    stateUpdate = stateFixture.Update(2); stateUpdate.structSize = sizeof(states);
+    states.base.layerAlphaFormat = WAR3_RENDER_DYNAMIC_LAYER_ALPHA_V1; states.base.layerAlphaCount = 2;
+    states.base.instanceSliceCount = 2; states.base.layerAlphas = layerAlphas; states.base.instanceSlices = layerSlices;
+    states.materialStateFormat = WAR3_RENDER_DYNAMIC_MATERIAL_STATE_V1; states.materialStateCount = states.materialInstanceSliceCount = 2;
+    states.materialStates = stateValues; states.materialInstanceSlices = stateSlices;
+    auto stateDescription = stateFixture.Scene(stateUpdate); stateDescription.textureCount = 2;
+    ModelScene stateScene; Check(CopySkinnedModelInput(stateDescription, stateScene, bytes));
+    SkinPose stateBase; Check(CopySkinUpdate(stateUpdate, stateScene, stateBase));
+    stateValues[1].textureIndex = 0; layerAlphas[1] = .25f; stateFixture.groups[1].values[9] = 125; stateUpdate.contentVersion = 3;
+    SkinPose stateFull; Check(CopySkinUpdate(stateUpdate, stateScene, stateFull));
+    auto stateDelta = stateBase; Check(CopySkinUpdateInstances(stateUpdate, stateScene, one, stateDelta) && SamePose(stateDelta, stateFull));
+    const auto rejectState = [&] {
+        auto copy = stateBase; Check(!CopySkinUpdateInstances(stateUpdate, stateScene, one, copy) && SamePose(copy, stateBase));
+    };
+    stateValues[1].textureIndex = 2; rejectState(); stateValues[1].textureIndex = 0;
+    stateValues[1].samplerFlags = 4; rejectState(); stateValues[1].samplerFlags = 3;
+    stateValues[1].uvTransform[0] = nan; rejectState(); stateValues[1].uvTransform[0] = 0;
+    layerAlphas[1] = nan; rejectState(); layerAlphas[1] = .25f;
+    stateSlices[1].first = 0; rejectState(); stateSlices[1].first = 1;
+    layerSlices[1].first = 0; rejectState(); layerSlices[1].first = 1;
+    auto plain = stateBase; plain.dynamicMaterialStates = false;
+    Check(!CopySkinUpdateInstances(stateUpdate, stateScene, one, plain));
+    stateDelta = stateBase; Check(CopySkinUpdateInstances(stateUpdate, stateScene, one, stateDelta) && SamePose(stateDelta, stateFull));
+}
 }
 int main() {
     try {
         LayerFlags();
+        InstanceDelta();
         RenderSkinFixture fixture;
         auto update = fixture.Update(); auto description = fixture.Scene(update);
         ModelScene scene; std::uint64_t bytes = 0;
@@ -185,7 +258,7 @@ int main() {
             && sizeof(War3RenderFrameMetricsPageV2) == 304
             && offsetof(War3RenderFrameMetricsPageV2, oldestFrame) == 16
             && offsetof(War3RenderFrameMetricsPageV2, adapterName) == 48);
-        std::cout << "skin_input copied=1 range_layout_count_rejections=1 recovery=1 old_tail_unchanged=1 material_alpha_owned=1 material_roster_empty=1\n";
+        std::cout << "skin_input copied=1 range_layout_count_rejections=1 recovery=1 old_tail_unchanged=1 material_alpha_owned=1 material_roster_empty=1 instance_delta=1\n";
         std::cout << "frame_metrics_abi pointer_bytes=" << sizeof(void*) << " api_bytes=" << sizeof(War3RenderPluginApiV2)
             << " tail_offset=" << offsetof(War3RenderPluginApiV2, getFrameMetrics)
             << " record_bytes=" << sizeof(War3RenderFrameMetricsV2) << " page_bytes=" << sizeof(War3RenderFrameMetricsPageV2) << '\n';

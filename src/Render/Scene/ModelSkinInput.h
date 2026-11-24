@@ -29,6 +29,13 @@ struct StaticSamplerSceneView {
 [[nodiscard]] bool CopySkinnedModelInput(const War3RenderSkinnedModelSceneV2& input,
     ModelScene& scene, std::uint64_t& payloadBytes);
 [[nodiscard]] bool CopySkinUpdate(const War3RenderSkinUpdateV2& input, const ModelScene& scene, SkinPose& pose);
+// 增量复制：pose 是同一场景版本、同尺寸/模式、由上面整份复制（或本函数）得到的较旧副本，
+// 只校验并复制 changed 中列出的实例（严格递增、可为空），其余实例保持 pose 原值。
+// 只用于逐实例固定布局；列出实例的模型与各片段位置必须与 pose 相同。
+// 调用方保证未列出实例的输入内容与 pose 逐字节相同，否则结果是旧值而不是输入值（仍是校验过的数据）。
+// 失败时 pose 不变。
+[[nodiscard]] bool CopySkinUpdateInstances(const War3RenderSkinUpdateV2& input, const ModelScene& scene,
+    std::span<const std::uint32_t> changed, SkinPose& pose);
 // 显式新roster初始化，静态资产已经验证且保持驻留。只复制校验/显隐必需layout元数据，
 // 不复制几何、纹理或索引；失败不改变output，旧CopySkinUpdate的固定baseline规则保持。
 [[nodiscard]] bool CopySkinRoster(const War3RenderSkinUpdateV2& input,
