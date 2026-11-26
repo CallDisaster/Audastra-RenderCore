@@ -63,8 +63,8 @@ bool BindModelLayerCounts(ModelScene& scene, bool enabled) {
 bool ValidateStaticSamplerScene(const War3RenderModelSceneV2& input,
     std::uint64_t textureDescriptorBytes, std::uint64_t texturePixelBytes, StaticSamplerSceneView& output) {
     if ((input.structSize != sizeof(input) && input.structSize != sizeof(War3RenderStaticSamplerModelSceneV2))
-        || input.vertexCount > 2097152 || input.indexCount > 6291456 || input.layerCount > 131072
-        || input.meshCount > 65536 || input.modelCount > 16384 || input.textureCount > 4096
+        || input.vertexCount > WAR3_RENDER_MODEL_MAX_VERTICES || input.indexCount > WAR3_RENDER_MODEL_MAX_INDICES
+        || input.layerCount > 131072 || input.meshCount > 65536 || input.modelCount > 16384 || input.textureCount > 4096
         || (input.vertexCount && !input.vertices) || (input.indexCount && !input.indices)
         || (input.layerCount && !input.layers) || (input.meshCount && !input.meshes)
         || (input.modelCount && !input.models) || (input.instanceCount && !input.instances)
@@ -373,7 +373,8 @@ bool CopySkinUpdateInstances(const War3RenderSkinUpdateV2& input, const ModelSce
 }
 bool CopySkinnedModelInput(const War3RenderSkinnedModelSceneV2& input, ModelScene& scene, std::uint64_t& payloadBytes) {
     if (scene.explicitStaticSamplers || !scene.staticSamplerFlags.empty() || scene.staticSamplerBackendBudget
-        || input.structSize < sizeof(input) || !input.initialPose || input.vertexCount > 2097152 || input.indexCount > 6291456
+        || input.structSize < sizeof(input) || !input.initialPose || input.vertexCount > WAR3_RENDER_MODEL_MAX_VERTICES
+        || input.indexCount > WAR3_RENDER_MODEL_MAX_INDICES
         || input.layerCount > 131072 || input.meshCount > 65536 || input.modelCount > 16384 || input.textureCount > 4096
         || (input.vertexCount && !input.vertices) || (input.indexCount && !input.indices)
         || (input.layerCount && !input.layers) || (input.meshCount && !input.meshes) || (input.modelCount && !input.models)) return false;
@@ -507,7 +508,8 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
     const auto meshes = sum(assets.prefix.meshCount, assets.meshCount);
     const auto models = sum(assets.prefix.modelCount, assets.modelCount);
     const auto textures = sum(assets.prefix.modelTextureCount, assets.modelTextureCount);
-    if (vertices > 2097152 || indices > 6291456 || layers > 131072 || meshes > 65536 || models > 16384
+    if (vertices > WAR3_RENDER_MODEL_MAX_VERTICES || indices > WAR3_RENDER_MODEL_MAX_INDICES || layers > 131072
+        || meshes > 65536 || models > 16384
         || textures > 4096 || sum(assets.prefix.particleTextureCount, assets.particleTextureCount) > 256
         || input.sceneVersion <= residentStatic->initialSkin->sceneVersion
         || input.matrixFormat != residentStatic->initialSkin->matrixFormat

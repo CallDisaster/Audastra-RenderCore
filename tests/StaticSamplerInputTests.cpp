@@ -94,8 +94,9 @@ void RejectedPreservation() {
     for (auto unknown : {4u, 7u, 0x80000000u, UINT32_MAX}) {
         fixture.flags[0] = unknown; rejectHeader(valid); fixture.flags[0] = 0;
     }
-    bad = valid; bad.base.vertexCount = 2097153; rejectHeader(bad);
-    bad = valid; bad.base.indexCount = 6291457; rejectHeader(bad);
+    static_assert(WAR3_RENDER_MODEL_MAX_VERTICES == 4194304 && WAR3_RENDER_MODEL_MAX_INDICES == 12582912);
+    bad = valid; bad.base.vertexCount = WAR3_RENDER_MODEL_MAX_VERTICES + 1; rejectHeader(bad);
+    bad = valid; bad.base.indexCount = WAR3_RENDER_MODEL_MAX_INDICES + 1; rejectHeader(bad);
     bad = valid; bad.base.layerCount = 131073; rejectHeader(bad);
     bad = valid; bad.base.meshCount = 65537; rejectHeader(bad);
     bad = valid; bad.base.modelCount = 16385; rejectHeader(bad);

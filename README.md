@@ -3,7 +3,7 @@
 
 # Audastra RenderCore
 
-Audastra 地图编辑器与 WarVK 共用的经典版 Warcraft III（1.27a）模型渲染核心，当前版本 0.1.23（工程内部名 War3RenderCore）。
+Audastra 地图编辑器与 WarVK 共用的经典版 Warcraft III（1.27a）模型渲染核心，当前版本 0.1.24（工程内部名 War3RenderCore）。
 内容：经典 MDX 有界解析、冻结姿态参考、预热 CPU 批量求值、插件输入可移植校验与原创测试。
 只依赖 C++20 编译器和标准库，不包含 Qt、设备、GPU 后端、MPQ 读取或游戏安装逻辑。
 浮点选项为 MSVC `/fp:precise`、其他编译器 `-ffp-contract=off`。
@@ -55,6 +55,10 @@ FORGE 配置及实际消费者构建都拒绝未提交的共享修改；不要�
 逐位相同的轨迹生效，不改变源键序。成功警告通过独立有界视图提供材质层及原键偏移，
 默认 PoseDiagnostic 仍为32字节。PREM 读取不代表子模型已经发射或 GPU 绘制。
 接口和边界见 `docs/KMTA_PREM_PREVIEW.md`；候选验证回执由消费者记录。
+
+0.1.24 模型场景顶点与索引上限各放宽一倍（4194304 顶点、12582912 索引），做成公开常量
+`WAR3_RENDER_MODEL_MAX_VERTICES` / `WAR3_RENDER_MODEL_MAX_INDICES` 供宿主共用；整份提交载荷 320MiB、
+层、网格、模型、贴图上限与 ABI 结构体布局不变。
 
 0.1.23 新增 `CopySkinUpdateInstances`：在同一场景版本、同尺寸的已校验旧姿势副本上，只校验并复制调用方列出的实例（逐实例固定布局），未列出实例保持旧值；结果与整份复制逐字节相同，失败不改旧副本。供消费者按“本帧变化的实例”增量更新姿势，ABI 与结构体布局不变。
 

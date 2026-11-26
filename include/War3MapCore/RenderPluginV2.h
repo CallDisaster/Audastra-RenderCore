@@ -157,7 +157,9 @@ struct War3RenderModelSceneV2 {
     // 每张贴图 atlas 1×1；可只给 mip0（maxSampleMip=0），插件生成其余级用于远处采样。
     const War3RenderTextureMipChainV2* textures;
 };
-// 模型硬预算：2097152 顶点、6291456 索引、131072 层、65536 网格、16384 模型、262144 实例、
+// 模型场景顶点与索引硬上限；核心校验与宿主构建场景共用。
+constexpr std::uint32_t WAR3_RENDER_MODEL_MAX_VERTICES = 4194304, WAR3_RENDER_MODEL_MAX_INDICES = 12582912;
+// 模型硬预算：4194304 顶点、12582912 索引、131072 层、65536 网格、16384 模型、262144 实例、
 // 4096 贴图（单张<=2048、<=16MiB，累计<=192MiB）；整个提交载荷<=320MiB。
 // 场景环境：模型光照、距离雾与地表静态阴影。未设置时为中性灰光、无雾、无阴影。
 // 地表光照由宿主烘焙在顶点颜色里，不受此结构影响。
