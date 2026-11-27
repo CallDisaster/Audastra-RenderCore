@@ -12,6 +12,11 @@ inline constexpr std::uint32_t WAR3_RENDER_MAX_MODEL_SCENE_LAYERS = 32;
 inline constexpr std::uint32_t WAR3_RENDER_MODEL_LAYER_MODEL = 0;
 inline constexpr std::uint32_t WAR3_RENDER_MODEL_LAYER_GROUND_DECAL_PREVIEW = 1;
 inline constexpr std::uint32_t WAR3_RENDER_MODEL_LAYER_CAP_GROUND_DECAL_PREVIEW = 1;
+// 天空：地图天空模型（SetSkyModel）的编辑器预览。在地表和其余模型之前画，以镜头位置为原点
+// （跟着镜头转向，不随镜头平移），各层不受雾影响；画完清空深度，因此不遮挡场景里的任何东西。
+// 只接受模型，不接受粒子。宿主先查询能力位。
+inline constexpr std::uint32_t WAR3_RENDER_MODEL_LAYER_SKY = 2;
+inline constexpr std::uint32_t WAR3_RENDER_MODEL_LAYER_CAP_SKY = 2;
 extern "C" {
 struct War3RenderModelSceneLayerV2 {
     std::uint32_t structSize, reserved;

@@ -60,6 +60,8 @@ FORGE 配置及实际消费者构建都拒绝未提交的共享修改；不要�
 （glTF 通道）、按世界坐标三平面平铺的细节法线/ORM/颜色亮度及强度参数，供地图给物体类型加的表面材质在预览里着色。经 `War3RenderSurfaceSkinnedSceneV2`
 （彩色蒙皮场景之后）与 `War3RenderSurfaceAssetAppendV2`（资产追加之后）提交，`getSkinStatus` 的
 `War3RenderSkinSurfaceCapabilitiesV2` 报告支持；只作用于不透明与透明测试层。
+同版本的附加模型层新增天空角色（`WAR3_RENDER_MODEL_LAYER_SKY`，能力位 `WAR3_RENDER_MODEL_LAYER_CAP_SKY`）：
+以镜头为原点最先绘制、不受雾影响、画完清深度，用于预览地图天空模型。
 旧结构体布局与旧入口不变。
 
 0.1.24 模型场景顶点与索引上限各放宽一倍（4194304 顶点、12582912 索引），做成公开常量
