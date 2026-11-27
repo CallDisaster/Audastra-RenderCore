@@ -2,6 +2,7 @@
 // Copyright (C) 2026 CallDisaster
 #include "RenderSkinFixture.h"
 #include "../src/Render/Scene/ModelSkinInput.h"
+#include "War3RenderCore/Legacy/RenderPluginSurfaceMaterial.h"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -66,6 +67,32 @@ int main() try {
     mesh.mesh.baseVertex = 0; rejected(); mesh.mesh.baseVertex = 4;
     fixture.groups[1].values[1] = std::numeric_limits<float>::quiet_NaN(); rejected(); fixture.groups[1].values[1] = 0;
     colors[1].rgb[0] = 1.1f; rejected(); colors[1].rgb[0] = 0;
+    {
+        // 表面材质尾部只描述追加的模型；驻留模型补为无材质；纹理序号按追加后的全局编号校验。
+        constexpr auto none = WAR3_RENDER_MODEL_NO_TEXTURE;
+        War3RenderSurfaceAssetAppendV2 surfaceAppend{}; surfaceAppend.base = append;
+        surfaceAppend.base.structSize = sizeof(surfaceAppend);
+        const War3RenderTextureMipChainV2 chain{};
+        surfaceAppend.base.modelTextureCount = 1; surfaceAppend.base.modelTextures = &chain;
+        War3RenderModelSurfaceV2 surface{0, none, none, none, none, 2.0f, 1.0f, 0.5f, 0.0f, 1.0f, 1.0f, 256.0f, 1.0f,
+            {1.0f, 1.0f}, 1.0f};
+        surfaceAppend.surfaceFormat = WAR3_RENDER_MODEL_SURFACE_V1; surfaceAppend.surfaceCount = 1; surfaceAppend.surfaces = &surface;
+        ModelScene surfaced; std::uint64_t surfacedBytes = 0;
+        Check(CopySkinAssetAppend(surfaceAppend.base, colored.base, resident, surfaced, surfacedBytes)
+            && surfaced.modelSurfaces.size() == 2 && surfaced.modelSurfaces[0].normalTexture == none
+            && surfaced.modelSurfaces[1].normalTexture == 0 && surfaced.modelSurfaces[1].normalScale == 2.0f,
+            "surface append fills resident models with no surface");
+        ModelScene bad; std::uint64_t badBytes = 0;
+        surface.normalTexture = 1;
+        Check(!CopySkinAssetAppend(surfaceAppend.base, colored.base, resident, bad, badBytes),
+            "surface texture beyond the appended global table is rejected");
+        surface.normalTexture = 0; surfaceAppend.surfaceCount = 0;
+        Check(!CopySkinAssetAppend(surfaceAppend.base, colored.base, resident, bad, badBytes),
+            "surface count must equal appended models");
+        surfaceAppend.surfaceCount = 1; surfaceAppend.base.structSize = sizeof(surfaceAppend) - 4;
+        Check(!CopySkinAssetAppend(surfaceAppend.base, colored.base, resident, bad, badBytes),
+            "unknown append size is rejected");
+    }
     candidate.SealStaticSuffix();
     auto appended = std::make_shared<ModelScene>(std::move(candidate));
     std::weak_ptr<ModelScene> previousOwner = appended;

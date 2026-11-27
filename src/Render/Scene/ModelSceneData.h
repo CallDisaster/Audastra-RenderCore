@@ -6,6 +6,7 @@
 #include "War3MapCore/RenderPluginMaterialAlpha.h"
 #include "War3MapCore/RenderPluginMaterialState.h"
 #include "War3MapCore/RenderPluginStaticSamplers.h"
+#include "War3MapCore/RenderPluginSurfaceMaterial.h"
 #include <memory>
 #include <utility>
 #include <vector>
@@ -55,6 +56,7 @@ struct ModelScene {
     std::vector<std::uint32_t> modelGroupCounts;
     std::vector<std::uint32_t> modelLayerCounts; // 显式材质模式下实际draw层数，与models同序。
     std::vector<War3RenderMeshColorV2> meshColors; // 空=旧白色路径，否则与meshes等长
+    std::vector<War3RenderModelSurfaceV2> modelSurfaces; // 空=没有表面材质，否则与models等长
     std::shared_ptr<const SkinPose> initialSkin; // 非空即为蒙皮模型槽
     // 追加场景的layout元数据完整，几何/纹理只拥有本次suffix；旧字节由不可变前缀拥有。
     std::shared_ptr<const ModelScene> staticBase;

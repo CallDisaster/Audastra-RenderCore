@@ -13,6 +13,22 @@ namespace War3Map::Render {
 namespace {
 bool Coordinate(float v) { return std::isfinite(v) && std::abs(v) <= 1.0e7f; }
 bool Unit(float v) { return std::isfinite(v) && v >= 0 && v <= 1; }
+bool Within(float v, float low, float high) { return std::isfinite(v) && v >= low && v <= high; }
+// 没有材质的模型：五张图都为空，参数取中性值（追加时补齐旧模型用）。
+constexpr War3RenderModelSurfaceV2 kNoSurface{WAR3_RENDER_MODEL_NO_TEXTURE, WAR3_RENDER_MODEL_NO_TEXTURE,
+    WAR3_RENDER_MODEL_NO_TEXTURE, WAR3_RENDER_MODEL_NO_TEXTURE, WAR3_RENDER_MODEL_NO_TEXTURE,
+    1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 256.0f, 1.0f, {1.0f, 1.0f}, 1.0f};
+bool ValidSurface(const War3RenderModelSurfaceV2& s, std::uint64_t textureCount) {
+    const auto texture = [&](std::uint32_t index) { return index == WAR3_RENDER_MODEL_NO_TEXTURE || index < textureCount; };
+    return texture(s.normalTexture) && texture(s.ormTexture) && texture(s.detailNormalTexture) && texture(s.detailOrmTexture)
+        && texture(s.detailAlbedoTexture)
+        && Within(s.detailScale, 8.0f, 65536.0f) && Within(s.detailStrength, 0.0f, 4.0f)
+        && Within(s.detailOrmMean[0], 1.0f / 1024.0f, 1.0f) && Within(s.detailOrmMean[1], 1.0f / 1024.0f, 1.0f)
+        && Within(s.detailAlbedoMean, 1.0f / 1024.0f, 1.0f)
+        && Within(s.normalScale, 0.0f, 8.0f) && (s.normalYSign == -1.0f || s.normalYSign == 1.0f)
+        && Within(s.roughness, 0.0f, 4.0f) && Within(s.metallic, 0.0f, 1.0f)
+        && Within(s.occlusion, 0.0f, 1.0f) && Within(s.specular, 0.0f, 4.0f);
+}
 template<class T> void Copy(std::vector<T>& target, const T* source, std::uint32_t count) {
     if (count) target.assign(source, source + count);
 }
@@ -392,6 +408,15 @@ bool CopySkinnedModelInput(const War3RenderSkinnedModelSceneV2& input, ModelScen
         for (std::uint32_t i = 0; i < colored.colorCount; ++i)
             for (const auto v : colored.colors[i].rgb) if (!Unit(v)) return false;
         Copy(scene.meshColors, colored.colors, colored.colorCount);
+        // 表面材质尾部：只有完整的新尾部才读取；按模型给，数量必须等于模型数。
+        if (input.structSize >= sizeof(War3RenderSurfaceSkinnedSceneV2)) {
+            const auto& surface = *reinterpret_cast<const War3RenderSurfaceSkinnedSceneV2*>(&input);
+            if (surface.surfaceFormat != WAR3_RENDER_MODEL_SURFACE_V1 || surface.surfaceCount != input.modelCount
+                || (surface.surfaceCount != 0 && !surface.surfaces)) return false;
+            for (std::uint32_t i = 0; i < surface.surfaceCount; ++i)
+                if (!ValidSurface(surface.surfaces[i], input.textureCount)) return false;
+            Copy(scene.modelSurfaces, surface.surfaces, surface.surfaceCount);
+        }
     }
     scene.vertices.reserve(input.vertexCount); scene.vertexGroups.reserve(input.vertexCount);
     for (std::uint32_t i = 0; i < input.vertexCount; ++i) {
@@ -441,6 +466,7 @@ bool CopySkinnedModelInput(const War3RenderSkinnedModelSceneV2& input, ModelScen
         + static_cast<std::uint64_t>(input.meshCount) * sizeof(War3RenderSkinnedModelMeshV2)
         + static_cast<std::uint64_t>(input.modelCount) * sizeof(War3RenderSkinnedModelV2)
         + scene.meshColors.size() * sizeof(War3RenderMeshColorV2)
+        + scene.modelSurfaces.size() * sizeof(War3RenderModelSurfaceV2)
         + pose->instances.size() * (sizeof(War3RenderSkinnedModelInstanceV2) + sizeof(War3RenderModelInstanceV2))
         + pose->groups.size() * sizeof(War3RenderGroupMatrixV2) + pose->alphas.size() * sizeof(float) + pose->colors.size() * sizeof(War3RenderMeshColorV2)
         + pose->layerAlphas.size() * sizeof(float) + pose->layerSlices.size() * sizeof(War3RenderMaterialLayerSliceV2)
@@ -466,6 +492,7 @@ bool CopySkinRoster(const War3RenderSkinUpdateV2& input, const ModelScene& resid
     candidate.meshes = residentStatic.meshes; candidate.layers = residentStatic.layers;
     candidate.meshGroups = residentStatic.meshGroups;
     candidate.modelLayerCounts = residentStatic.modelLayerCounts;
+    candidate.modelSurfaces = residentStatic.modelSurfaces;
     candidate.dynamicColors = residentStatic.dynamicColors || !residentStatic.initialSkin->colors.empty();
     candidate.dynamicMaterialAlphas = residentStatic.dynamicMaterialAlphas;
     candidate.dynamicMaterialStates = residentStatic.dynamicMaterialStates;
@@ -487,7 +514,8 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
     if (!SkinModes(input, colored, material, state)) return false;
     if (!residentStatic || residentStatic->explicitStaticSamplers || !residentStatic->staticSamplerFlags.empty()
         || residentStatic->staticSamplerBackendBudget
-        || !residentStatic->initialSkin || assets.structSize != sizeof(assets) || assets.reserved
+        || !residentStatic->initialSkin || assets.reserved
+        || (assets.structSize != sizeof(assets) && assets.structSize != sizeof(War3RenderSurfaceAssetAppendV2))
         || assets.prefix.vertexCount != residentStatic->VertexCount()
         || assets.prefix.indexCount != residentStatic->IndexCount()
         || assets.prefix.layerCount != residentStatic->layers.size()
@@ -518,7 +546,18 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
     const auto bytes = vertices * sizeof(War3RenderSkinnedModelVertexV2) + indices * sizeof(std::uint16_t)
         + layers * sizeof(War3RenderModelLayerV2) + meshes * (sizeof(War3RenderSkinnedModelMeshV2) + sizeof(War3RenderMeshColorV2))
         + models * sizeof(War3RenderSkinnedModelV2);
-    if (bytes > 320ull * 1024 * 1024) return false;
+    // 表面材质尾部只描述本次追加的模型；纹理序号属于追加后的全局编号空间。
+    const War3RenderSurfaceAssetAppendV2* surface = assets.structSize == sizeof(War3RenderSurfaceAssetAppendV2)
+        ? reinterpret_cast<const War3RenderSurfaceAssetAppendV2*>(&assets) : nullptr;
+    if (surface) {
+        if (surface->surfaceFormat != WAR3_RENDER_MODEL_SURFACE_V1 || surface->surfaceCount != assets.modelCount
+            || (surface->surfaceCount != 0 && !surface->surfaces)) return false;
+        for (std::uint32_t i = 0; i < surface->surfaceCount; ++i)
+            if (!ValidSurface(surface->surfaces[i], textures)) return false;
+    }
+    const bool surfaces = surface || !residentStatic->modelSurfaces.empty();
+    const auto surfaceBytes = surfaces ? models * sizeof(War3RenderModelSurfaceV2) : 0;
+    if (bytes + surfaceBytes > 320ull * 1024 * 1024) return false;
     ModelScene candidate;
     // 首份平坦资产只保持一个原拥有者；后续页面列表只分享字节，既不留动态历史也不递归析构。
     if (residentStatic->staticSuffix) {
@@ -535,6 +574,12 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
     candidate.layers = residentStatic->layers; candidate.meshes = residentStatic->meshes;
     candidate.models = residentStatic->models; candidate.meshGroups = residentStatic->meshGroups;
     candidate.modelGroupCounts = residentStatic->modelGroupCounts;
+    if (surfaces) {
+        candidate.modelSurfaces = residentStatic->modelSurfaces;
+        candidate.modelSurfaces.resize(assets.prefix.modelCount, kNoSurface);
+        for (std::uint32_t i = 0; i < assets.modelCount; ++i)
+            candidate.modelSurfaces.push_back(surface ? surface->surfaces[i] : kNoSurface);
+    }
     candidate.meshColors = residentStatic->meshColors;
     if (!candidate.meshColors.empty() || assets.colorCount) {
         if (candidate.meshColors.empty()) candidate.meshColors.resize(assets.prefix.meshCount, {{1, 1, 1}});
@@ -594,7 +639,7 @@ bool CopySkinAssetAppend(const War3RenderAssetAppendV2& assets, const War3Render
     candidate.instances.reserve(pose->instances.size());
     for (const auto& instance : pose->instances) candidate.instances.push_back(instance.instance);
     candidate.initialSkin = std::move(pose);
-    const auto totalBytes = bytes + candidate.initialSkin->instances.size() * sizeof(War3RenderSkinnedModelInstanceV2)
+    const auto totalBytes = bytes + surfaceBytes + candidate.initialSkin->instances.size() * sizeof(War3RenderSkinnedModelInstanceV2)
         + candidate.initialSkin->groups.size() * sizeof(War3RenderGroupMatrixV2)
         + candidate.initialSkin->alphas.size() * sizeof(float) + candidate.initialSkin->colors.size() * sizeof(War3RenderMeshColorV2)
         + candidate.initialSkin->layerAlphas.size() * sizeof(float)
