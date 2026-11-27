@@ -3,7 +3,7 @@
 
 # Audastra RenderCore
 
-Audastra 地图编辑器与 WarVK 共用的经典版 Warcraft III（1.27a）模型渲染核心，当前版本 0.1.24（工程内部名 War3RenderCore）。
+Audastra 地图编辑器与 WarVK 共用的经典版 Warcraft III（1.27a）模型渲染核心，当前版本 0.1.25（工程内部名 War3RenderCore）。
 内容：经典 MDX 有界解析、冻结姿态参考、预热 CPU 批量求值、插件输入可移植校验与原创测试。
 只依赖 C++20 编译器和标准库，不包含 Qt、设备、GPU 后端、MPQ 读取或游戏安装逻辑。
 浮点选项为 MSVC `/fp:precise`、其他编译器 `-ffp-contract=off`。
@@ -55,6 +55,12 @@ FORGE 配置及实际消费者构建都拒绝未提交的共享修改；不要�
 逐位相同的轨迹生效，不改变源键序。成功警告通过独立有界视图提供材质层及原键偏移，
 默认 PoseDiagnostic 仍为32字节。PREM 读取不代表子模型已经发射或 GPU 绘制。
 接口和边界见 `docs/KMTA_PREM_PREVIEW.md`；候选验证回执由消费者记录。
+
+0.1.25 新增可选表面材质尾部（`RenderPluginSurfaceMaterial.h`）：按模型附加切线空间法线图与遮蔽/粗糙度/金属度图
+（glTF 通道）、按世界坐标三平面平铺的细节法线/ORM/颜色亮度及强度参数，供地图给物体类型加的表面材质在预览里着色。经 `War3RenderSurfaceSkinnedSceneV2`
+（彩色蒙皮场景之后）与 `War3RenderSurfaceAssetAppendV2`（资产追加之后）提交，`getSkinStatus` 的
+`War3RenderSkinSurfaceCapabilitiesV2` 报告支持；只作用于不透明与透明测试层。
+旧结构体布局与旧入口不变。
 
 0.1.24 模型场景顶点与索引上限各放宽一倍（4194304 顶点、12582912 索引），做成公开常量
 `WAR3_RENDER_MODEL_MAX_VERTICES` / `WAR3_RENDER_MODEL_MAX_INDICES` 供宿主共用；整份提交载荷 320MiB、

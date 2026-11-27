@@ -4,6 +4,7 @@
 #include "RenderSkinFixture.h"
 #include "War3RenderCore/Legacy/RenderPluginModelLayers.h"
 #include "War3RenderCore/Legacy/RenderPluginFrameMetrics.h"
+#include "War3RenderCore/Legacy/RenderPluginSurfaceMaterial.h"
 #include "../src/Render/Scene/ModelSkinInput.h"
 #include <cstring>
 #include <iostream>
@@ -29,6 +30,48 @@ void LayerFlags() {
         Check(!CopySkinnedModelInput(description, scene, bytes));
         scene.layers.push_back(fixture.layer); Check(!ValidateModelGeometry(scene, 0));
     }
+}
+// 表面材质尾部：按模型给，纹理序号在纹理表内，细节层保留位为空；任一不符整份拒绝。
+void SurfaceMaterials() {
+    constexpr auto none = WAR3_RENDER_MODEL_NO_TEXTURE;
+    RenderSkinFixture fixture; auto update = fixture.Update();
+    War3RenderSurfaceSkinnedSceneV2 surfaced{};
+    surfaced.base.base = fixture.Scene(update);
+    surfaced.base.base.structSize = sizeof(surfaced);
+    surfaced.base.base.textureCount = 2;
+    const War3RenderMeshColorV2 white{{1, 1, 1}};
+    surfaced.base.colorFormat = WAR3_RENDER_STATIC_MESH_RGB_V1; surfaced.base.colorCount = 1; surfaced.base.colors = &white;
+    const War3RenderModelSurfaceV2 surface{0, 1, none, 1, 0, 1.5f, -1.0f, 0.8f, 0.2f, 1.0f, 1.0f, 256.0f, 1.0f,
+        {0.5f, 0.6f}, 0.4f};
+    surfaced.surfaceFormat = WAR3_RENDER_MODEL_SURFACE_V1; surfaced.surfaceCount = 1; surfaced.surfaces = &surface;
+    ModelScene scene; std::uint64_t bytes = 0;
+    Check(CopySkinnedModelInput(surfaced.base.base, scene, bytes) && scene.modelSurfaces.size() == 1
+        && scene.modelSurfaces[0].ormTexture == 1 && scene.modelSurfaces[0].normalScale == 1.5f);
+    // 只带彩色尾部时没有材质；材质计入同一提交预算。
+    auto colored = surfaced.base; colored.base.structSize = sizeof(colored);
+    ModelScene plain; std::uint64_t plainBytes = 0;
+    Check(CopySkinnedModelInput(colored.base, plain, plainBytes) && plain.modelSurfaces.empty()
+        && bytes == plainBytes + sizeof(War3RenderModelSurfaceV2));
+    const auto reject = [&](auto mutate) {
+        auto copy = surfaced; auto value = surface; copy.surfaces = &value; mutate(copy, value);
+        ModelScene temporary; std::uint64_t temporaryBytes = 0;
+        Check(!CopySkinnedModelInput(copy.base.base, temporary, temporaryBytes));
+    };
+    reject([](auto& s, auto&) { s.surfaceFormat = 2; });
+    reject([](auto& s, auto&) { s.surfaceCount = 0; s.surfaces = nullptr; });
+    reject([](auto& s, auto&) { s.surfaces = nullptr; });
+    reject([](auto&, auto& v) { v.normalTexture = 2; });
+    reject([](auto&, auto& v) { v.detailNormalTexture = 2; });
+    reject([](auto&, auto& v) { v.detailScale = 4.0f; });
+    reject([](auto&, auto& v) { v.detailStrength = 5.0f; });
+    reject([](auto&, auto& v) { v.detailOrmMean[1] = 0.0f; });
+    reject([](auto&, auto& v) { v.detailAlbedoTexture = 2; });
+    reject([](auto&, auto& v) { v.detailAlbedoMean = 0.0f; });
+    reject([](auto&, auto& v) { v.detailAlbedoMean = 1.5f; });
+    reject([](auto&, auto& v) { v.normalYSign = 0.5f; });
+    reject([](auto&, auto& v) { v.normalScale = 9.0f; });
+    reject([](auto&, auto& v) { v.metallic = std::numeric_limits<float>::quiet_NaN(); });
+    reject([](auto&, auto& v) { v.specular = -1.0f; });
 }
 bool SamePose(const SkinPose& a, const SkinPose& b) {
     const auto bytes = [](const auto& x, const auto& y) {
@@ -105,6 +148,7 @@ int main() {
     try {
         LayerFlags();
         InstanceDelta();
+        SurfaceMaterials();
         RenderSkinFixture fixture;
         auto update = fixture.Update(); auto description = fixture.Scene(update);
         ModelScene scene; std::uint64_t bytes = 0;
